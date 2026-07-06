@@ -1,98 +1,104 @@
-<p align="center">
-  <a href="http://nestjs.com/" target="blank"><img src="https://nestjs.com/img/logo-small.svg" width="120" alt="Nest Logo" /></a>
-</p>
+# wiki-mcp-api
 
-[circleci-image]: https://img.shields.io/circleci/build/github/nestjs/nest/master?token=abc123def456
-[circleci-url]: https://circleci.com/gh/nestjs/nest
+Server MCP (Model Context Protocol) che espone la wiki di dominio LLM Wiki agli agenti AI (Claude, OpenCode, ecc.) tramite stdio.
 
-  <p align="center">A progressive <a href="http://nodejs.org" target="_blank">Node.js</a> framework for building efficient and scalable server-side applications.</p>
-    <p align="center">
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/v/@nestjs/core.svg" alt="NPM Version" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/l/@nestjs/core.svg" alt="Package License" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/dm/@nestjs/common.svg" alt="NPM Downloads" /></a>
-<a href="https://circleci.com/gh/nestjs/nest" target="_blank"><img src="https://img.shields.io/circleci/build/github/nestjs/nest/master" alt="CircleCI" /></a>
-<a href="https://discord.gg/G7Qnnhy" target="_blank"><img src="https://img.shields.io/badge/discord-online-brightgreen.svg" alt="Discord"/></a>
-<a href="https://opencollective.com/nest#backer" target="_blank"><img src="https://opencollective.com/nest/backers/badge.svg" alt="Backers on Open Collective" /></a>
-<a href="https://opencollective.com/nest#sponsor" target="_blank"><img src="https://opencollective.com/nest/sponsors/badge.svg" alt="Sponsors on Open Collective" /></a>
-  <a href="https://paypal.me/kamilmysliwiec" target="_blank"><img src="https://img.shields.io/badge/Donate-PayPal-ff3f59.svg" alt="Donate us"/></a>
-    <a href="https://opencollective.com/nest#sponsor"  target="_blank"><img src="https://img.shields.io/badge/Support%20us-Open%20Collective-41B883.svg" alt="Support us"></a>
-  <a href="https://twitter.com/nestframework" target="_blank"><img src="https://img.shields.io/twitter/follow/nestframework.svg?style=social&label=Follow" alt="Follow us on Twitter"></a>
-</p>
-  <!--[![Backers on Open Collective](https://opencollective.com/nest/backers/badge.svg)](https://opencollective.com/nest#backer)
-  [![Sponsors on Open Collective](https://opencollective.com/nest/sponsors/badge.svg)](https://opencollective.com/nest#sponsor)-->
+## Descrizione
 
-## Description
+Il progetto documenta il dominio del software PLService per la verbalizzazione del Codice della Strada italiano ed espone i seguenti tool MCP:
 
-[Nest](https://github.com/nestjs/nest) framework TypeScript starter repository.
+| Tool | Uso |
+| --- | --- |
+| `wiki_search` | Ricerca full-text nella wiki |
+| `wiki_read_page` | Legge una pagina della wiki |
+| `wiki_list_pages` | Elenca le pagine disponibili |
+| `wiki_write_page` | Scrive una pagina (solo in `wiki/`) |
+| `wiki_append_log` | Aggiunge una riga di log all'ingest |
+| `wiki_list_raw` | Elenca i file sorgente grezzi (`raw/`) |
+| `wiki_read_raw` | Legge un file sorgente grezzo (read-only) |
+| `wiki_checksum` | Calcola il checksum di un file |
+| `wiki_graph` | Restituisce il grafo dei collegamenti tra pagine |
+| `wiki_status` | Stato generale della wiki |
 
-## Project setup
+## Setup del progetto
 
 ```bash
-$ npm install
+npm install
+cp .env.example .env
 ```
 
-## Compile and run the project
+Configura in `.env`:
+
+- `WIKI_PATH` — cartella contenente le pagine della wiki (scrivibile)
+- `RAW_PATH` — cartella contenente i sorgenti grezzi da cui fare ingest (read-only)
+
+## Build
 
 ```bash
-# development
-$ npm run start
-
-# watch mode
-$ npm run start:dev
-
-# production mode
-$ npm run start:prod
+npm run build
 ```
 
-## Run tests
+Genera l'eseguibile `dist/stdio.js`, che espone il server via stdio.
+
+## Sviluppo
 
 ```bash
-# unit tests
-$ npm run test
-
-# e2e tests
-$ npm run test:e2e
-
-# test coverage
-$ npm run test:cov
+npm run dev
 ```
 
-## Deployment
+## Configurazione come server MCP
 
-When you're ready to deploy your NestJS application to production, there are some key steps you can take to ensure it runs as efficiently as possible. Check out the [deployment documentation](https://docs.nestjs.com/deployment) for more information.
+Il server comunica via **stdio**, quindi va lanciato come processo locale (`node dist/stdio.js`) dal client MCP. Prima di configurarlo esegui `npm run build` e prendi nota del percorso assoluto di `dist/stdio.js`.
 
-If you are looking for a cloud-based platform to deploy your NestJS application, check out [Mau](https://mau.nestjs.com), our official platform for deploying NestJS applications on AWS. Mau makes deployment straightforward and fast, requiring just a few simple steps:
+### Claude Code
+
+**Da CLI:**
 
 ```bash
-$ npm install -g @nestjs/mau
-$ mau deploy
+claude mcp add --transport stdio wiki-mcp-api \
+  -e WIKI_PATH=/percorso/assoluto/wiki \
+  -e RAW_PATH=/percorso/assoluto/raw \
+  -- node /percorso/assoluto/wiki-mcp-api/dist/stdio.js
 ```
 
-With Mau, you can deploy your application in just a few clicks, allowing you to focus on building features rather than managing infrastructure.
+**Oppure via file di configurazione** (`~/.claude.json` per lo scope personale, o `.mcp.json` nella root del progetto per condividerlo via git):
 
-## Resources
+```json
+{
+  "mcpServers": {
+    "wiki-mcp-api": {
+      "type": "stdio",
+      "command": "node",
+      "args": ["/percorso/assoluto/wiki-mcp-api/dist/stdio.js"],
+      "env": {
+        "WIKI_PATH": "/percorso/assoluto/wiki",
+        "RAW_PATH": "/percorso/assoluto/raw"
+      }
+    }
+  }
+}
+```
 
-Check out a few resources that may come in handy when working with NestJS:
+### OpenCode
 
-- Visit the [NestJS Documentation](https://docs.nestjs.com) to learn more about the framework.
-- For questions and support, please visit our [Discord channel](https://discord.gg/G7Qnnhy).
-- To dive deeper and get more hands-on experience, check out our official video [courses](https://courses.nestjs.com/).
-- Deploy your application to AWS with the help of [NestJS Mau](https://mau.nestjs.com) in just a few clicks.
-- Visualize your application graph and interact with the NestJS application in real-time using [NestJS Devtools](https://devtools.nestjs.com).
-- Need help with your project (part-time to full-time)? Check out our official [enterprise support](https://enterprise.nestjs.com).
-- To stay in the loop and get updates, follow us on [X](https://x.com/nestframework) and [LinkedIn](https://linkedin.com/company/nestjs).
-- Looking for a job, or have a job to offer? Check out our official [Jobs board](https://jobs.nestjs.com).
+Aggiungi il server in `opencode.json` (globale in `~/.config/opencode/opencode.json`, oppure nella root del progetto per una configurazione locale):
 
-## Support
+```json
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "wiki-mcp-api": {
+      "type": "local",
+      "command": ["node", "/percorso/assoluto/wiki-mcp-api/dist/stdio.js"],
+      "enabled": true,
+      "environment": {
+        "WIKI_PATH": "/percorso/assoluto/wiki",
+        "RAW_PATH": "/percorso/assoluto/raw"
+      }
+    }
+  }
+}
+```
 
-Nest is an MIT-licensed open source project. It can grow thanks to the sponsors and support by the amazing backers. If you'd like to join them, please [read more here](https://docs.nestjs.com/support).
+## Licenza
 
-## Stay in touch
-
-- Author - [Kamil Myśliwiec](https://twitter.com/kammysliwiec)
-- Website - [https://nestjs.com](https://nestjs.com/)
-- Twitter - [@nestframework](https://twitter.com/nestframework)
-
-## License
-
-Nest is [MIT licensed](https://github.com/nestjs/nest/blob/master/LICENSE).
+MIT
