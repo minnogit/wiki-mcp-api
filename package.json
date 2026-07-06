@@ -1,0 +1,24 @@
+{
+  "name": "wiki-mcp-api",
+  "version": "0.1.0",
+  "description": "MCP server per la wiki di dominio LLM Wiki",
+  "type": "module",
+  "bin": "dist/stdio.js",
+  "scripts": {
+    "build": "tsup src/stdio.ts --format esm --no-splitting --dts && node -e \"const fs=require('fs');const f='dist/stdio.js';fs.writeFileSync(f,'#!/usr/bin/env node\\n'+fs.readFileSync(f,'utf8'));\" && chmod +x dist/stdio.js",
+    "start": "node dist/stdio.js",
+    "dev": "tsx src/stdio.ts"
+  },
+  "dependencies": {
+    "@mastra/core": "latest",
+    "@mastra/mcp": "latest",
+    "dotenv": "^16.0.0",
+    "gray-matter": "^4.0.3",
+    "zod": "^3.22.0"
+  },
+  "devDependencies": {
+    "tsup": "^8.0.0",
+    "tsx": "^4.0.0",
+    "typescript": "^5.7.0"
+  }
+}
