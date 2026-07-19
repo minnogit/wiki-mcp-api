@@ -9,7 +9,7 @@ export const wikiAppendLogTool = createTool({
     entry: z.string().describe('Testo della voce di log da appendere'),
   }),
   execute: async ({ entry }) => {
-    appendLog(entry)
+    await appendLog(entry)
     return { success: true }
   },
 })

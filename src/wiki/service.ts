@@ -2,6 +2,23 @@ import * as fs from 'fs'
 import * as path from 'path'
 import * as crypto from 'crypto'
 import matter from 'gray-matter'
+import lockfile from 'proper-lockfile'
+
+const LOCK_OPTS = {
+  retries: { retries: 10, factor: 1.5, minTimeout: 50, maxTimeout: 1000 },
+  stale: 10_000,
+}
+
+async function withFileLock<T>(targetPath: string, fn: () => T): Promise<T> {
+  fs.mkdirSync(path.dirname(targetPath), { recursive: true })
+  if (!fs.existsSync(targetPath)) fs.writeFileSync(targetPath, '', 'utf-8')
+  const release = await lockfile.lock(targetPath, LOCK_OPTS)
+  try {
+    return fn()
+  } finally {
+    await release()
+  }
+}
 
 function resolveDir(envVar: string, fallback: string): string {
   const val = process.env[envVar]
@@ -30,7 +47,7 @@ export interface Page {
   updatedAt: string
 }
 
-export type PageMeta = Omit<Page, 'content' | 'links'>
+export type PageMeta = Omit<Page, 'content' | 'links'> & { score?: number }
 
 export interface SearchOpts {
   q?: string
@@ -44,6 +61,46 @@ export interface WikiStatus {
   byTipo: Record<string, number>
   byStato: Record<string, number>
   lastUpdated: string
+}
+
+const STOPWORDS = new Set([
+  'di', 'a', 'da', 'in', 'con', 'su', 'per', 'tra', 'fra', 'il', 'lo', 'la', 'i', 'gli', 'le',
+  'un', 'uno', 'una', 'del', 'dello', 'della', 'dei', 'degli', 'delle', 'al', 'allo', 'alla',
+  'ai', 'agli', 'alle', 'dal', 'dallo', 'dalla', 'dai', 'dagli', 'dalle', 'nel', 'nello', 'nella',
+  'nei', 'negli', 'nelle', 'che', 'e', 'o', 'ma', 'se', 'come', 'anche', 'non', 'più', 'meno',
+  'si', 'ci', 'ne', 'è',
+])
+
+function tokenize(text: string): string[] {
+  const matches = text.toLowerCase().match(/[a-zà-ÿ0-9]+/g) ?? []
+  return matches.filter((t) => t.length > 1 && !STOPWORDS.has(t))
+}
+
+function termCounts(tokens: string[]): Map<string, number> {
+  const counts = new Map<string, number>()
+  for (const t of tokens) counts.set(t, (counts.get(t) ?? 0) + 1)
+  return counts
+}
+
+const FIELD_WEIGHTS = { title: 4, tags: 3, content: 1 }
+
+function scorePage(page: Page, queryTerms: string[], docFreq: Map<string, number>, corpusSize: number): number {
+  const titleCounts = termCounts(tokenize(page.title))
+  const tagCounts = termCounts(tokenize(page.frontmatter.tags.join(' ')))
+  const contentCounts = termCounts(tokenize(page.content))
+
+  let score = 0
+  for (const term of queryTerms) {
+    const df = docFreq.get(term) ?? 0
+    if (df === 0) continue
+    const idf = Math.log(1 + corpusSize / df)
+    const tf =
+      FIELD_WEIGHTS.title * (titleCounts.get(term) ?? 0) +
+      FIELD_WEIGHTS.tags * (tagCounts.get(term) ?? 0) +
+      FIELD_WEIGHTS.content * (contentCounts.get(term) ?? 0)
+    score += tf * idf
+  }
+  return score
 }
 
 function extractTitle(content: string, filePath: string): string {
@@ -107,32 +164,52 @@ export function getPage(slug: string): Page | null {
 }
 
 export function searchPages(opts: SearchOpts): PageMeta[] {
-  return getAllPages()
-    .filter((p) => {
-      if (opts.tipo && p.frontmatter.tipo !== opts.tipo) return false
-      if (opts.stato && p.frontmatter.stato !== opts.stato) return false
-      if (opts.tag && !p.frontmatter.tags?.includes(opts.tag)) return false
-      if (opts.q) {
-        const q = opts.q.toLowerCase()
-        const hay = [p.title, p.content, ...(p.frontmatter.tags ?? [])].join(' ').toLowerCase()
-        if (!hay.includes(q)) return false
-      }
-      return true
-    })
+  const allPages = getAllPages()
+
+  const filtered = allPages.filter((p) => {
+    if (opts.tipo && p.frontmatter.tipo !== opts.tipo) return false
+    if (opts.stato && p.frontmatter.stato !== opts.stato) return false
+    if (opts.tag && !p.frontmatter.tags?.includes(opts.tag)) return false
+    return true
+  })
+
+  if (!opts.q) return filtered.map(({ content, links, ...meta }) => meta)
+
+  const queryTerms = [...new Set(tokenize(opts.q))]
+
+  if (queryTerms.length === 0) {
+    // query senza token utili (es. solo stopword/simboli): fallback a substring match
+    const q = opts.q.toLowerCase()
+    return filtered
+      .filter((p) => [p.title, p.content, ...(p.frontmatter.tags ?? [])].join(' ').toLowerCase().includes(q))
+      .map(({ content, links, ...meta }) => meta)
+  }
+
+  const docFreq = new Map<string, number>()
+  for (const p of allPages) {
+    const tokens = new Set(tokenize([p.title, p.frontmatter.tags.join(' '), p.content].join(' ')))
+    for (const term of queryTerms) {
+      if (tokens.has(term)) docFreq.set(term, (docFreq.get(term) ?? 0) + 1)
+    }
+  }
+
+  return filtered
+    .map((p) => ({ ...p, score: scorePage(p, queryTerms, docFreq, allPages.length) }))
+    .filter((p) => p.score > 0)
+    .sort((a, b) => b.score - a.score)
     .map(({ content, links, ...meta }) => meta)
 }
 
-export function writePage(relPath: string, content: string): void {
+export async function writePage(relPath: string, content: string): Promise<void> {
   if (!relPath.endsWith('.md')) throw new Error('Solo file .md sono consentiti')
   const full = path.resolve(WIKI_DIR, relPath)
   if (!full.startsWith(WIKI_DIR + path.sep)) throw new Error('Path fuori dalla wiki directory')
-  fs.mkdirSync(path.dirname(full), { recursive: true })
-  fs.writeFileSync(full, content, 'utf-8')
+  await withFileLock(full, () => fs.writeFileSync(full, content, 'utf-8'))
 }
 
-export function appendLog(entry: string): void {
+export async function appendLog(entry: string): Promise<void> {
   const logPath = path.join(WIKI_DIR, 'log.md')
-  fs.appendFileSync(logPath, '\n' + entry + '\n', 'utf-8')
+  await withFileLock(logPath, () => fs.appendFileSync(logPath, '\n' + entry + '\n', 'utf-8'))
 }
 
 export function listRaw(): string[] {

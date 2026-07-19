@@ -11,7 +11,7 @@ export const wikiWritePageTool = createTool({
   }),
   execute: async ({ path, content }) => {
     try {
-      writePage(path, content)
+      await writePage(path, content)
       return { success: true, path }
     } catch (e) {
       return { success: false, error: (e as Error).message }

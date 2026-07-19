@@ -19,7 +19,7 @@ Questa wiki documenta il dominio del software PLService per la verbalizzazione d
 
 Workflow principali:
 - INGEST: usa wiki_list_raw, wiki_read_raw, wiki_checksum, wiki_write_page, wiki_append_log
-- QUERY: usa wiki_search, wiki_read_page, wiki_list_pages
+- QUERY: leggi prima wiki_read_page("index") per individuare le pagine candidate, poi usa wiki_search, wiki_read_page, wiki_list_pages
 - LINT: usa wiki_list_pages, wiki_graph, wiki_status
 
 Regole:
