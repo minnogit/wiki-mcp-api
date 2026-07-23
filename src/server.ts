@@ -24,6 +24,7 @@ Workflow principali:
 
 Regole:
 - wiki_write_page scrive SOLO in wiki/, mai in raw/
+- wiki_write_page valida il frontmatter (tipo/tags/fonti/aggiornato/stato); index.md, log.md, sources.md e overview.md ne sono esenti
 - wiki_read_raw è read-only
 - I path delle pagine sono relativi alla wiki dir (es. "concetti/verbale.md")
   `.trim(),

@@ -54,6 +54,14 @@ stato: bozza | stabile | da-rivedere
 ---
 ```
 
+**Granularità**: una pagina = un solo `tipo` e un solo tema coerente.
+Se un argomento contiene sotto-concetti con natura o stato diversi (es. un
+aspetto "stabile" e uno ancora "da-rivedere", o un concetto giuridico insieme
+al suo modello software), valuta lo split in più pagine linkate invece di
+un frontmatter unico che li appiattisce. Frontmatter e contenuto coerenti
+rendono `wiki_search` (filtri per tag/tipo/stato + ranking sul contenuto)
+affidabile; una pagina che mescola temi diversi diluisce entrambi.
+
 **Struttura della pagina** (flessibile, adattala al tipo):
 
 1. Titolo `H1` = nome leggibile della pagina
@@ -97,23 +105,23 @@ Categorie suggerite per orientare il lavoro. Espandile man mano.
 
 Trigger: l'utente dice "ingerisci [file]" o segnala un nuovo file in `raw/`.
 
-1. **Calcola il checksum** del file con `sha256sum raw/nome-file.md` (primi 12 caratteri bastano).
+1. **Calcola il checksum** del file con il tool `wiki_checksum` (primi 12 caratteri dello SHA256).
 2. **Confronta con `wiki/sources.md`**:
    - File assente → primo ingest, procedi.
    - Checksum uguale → avvisa l'utente "file già processato, nessuna modifica rilevata" e **fermati** (a meno che l'utente forzi con "forza ingest").
    - Checksum diverso → aggiorna il checksum in `sources.md` e procedi segnalando "file aggiornato rispetto all'ultimo ingest".
-3. **Leggi** la sorgente completa.
+3. **Leggi** la sorgente completa con `wiki_read_raw`.
 4. **Discuti** con l'utente i punti chiave (3-7 punti), per allineamento.
 5. **Decidi** quali pagine creare e quali aggiornare. Privilegia
    l'aggiornamento di pagine esistenti rispetto alla creazione di duplicati.
-6. **Crea/aggiorna le pagine**:
+6. **Crea/aggiorna le pagine** con `wiki_write_page`:
    - Per ogni concetto/soggetto/procedura/entità nuova → pagina dedicata.
    - Per ogni pagina esistente impattata → integra le nuove informazioni,
      segnalando contraddizioni con `> ⚠ Contraddizione: ...` in linea.
    - Aggiorna cross-reference in entrambe le direzioni.
-7. **Aggiorna `wiki/sources.md`** con il checksum e le pagine toccate.
-8. **Aggiorna `index.md`** con le nuove pagine e i nuovi link.
-9. **Appendi a `log.md`** una voce:
+7. **Aggiorna `wiki/sources.md`** (con `wiki_write_page`) con il checksum e le pagine toccate.
+8. **Aggiorna `index.md`** (con `wiki_write_page`) con le nuove pagine e i nuovi link.
+9. **Appendi a `log.md`** con `wiki_append_log` una voce:
 
    ```
    ## [YYYY-MM-DD] ingest | nome-file-sorgente
@@ -134,15 +142,19 @@ e chiedi conferma** sullo scope.
 
 Trigger: l'utente fa una domanda di dominio.
 
-1. **Leggi `index.md`** per individuare le pagine candidate.
-2. **Leggi le pagine rilevanti** (di solito 3-8).
+1. **Leggi `index.md`** (con `wiki_read_page`) per un quadro d'insieme, poi usa
+   `wiki_search` (per `q`/`tag`/`tipo`/`stato`) o `wiki_list_pages` (per
+   categoria) per individuare le pagine candidate senza affidarti solo
+   all'indice manuale, che può essere disallineato.
+2. **Leggi le pagine rilevanti** con `wiki_read_page` (di solito 3-8).
 3. **Sintetizza la risposta** con citazioni esplicite alle pagine wiki e,
-   dove rilevante, alle sorgenti `raw/`.
+   dove rilevante, alle sorgenti `raw/` (consultabili con `wiki_read_raw`).
 4. **Proponi all'utente** se la risposta merita di essere filata:
    - come nuova pagina in `analisi/`,
    - come sezione aggiuntiva di una pagina esistente,
    - oppure di non filare nulla.
-5. Se l'utente accetta, fila la risposta e appendi a `log.md`:
+5. Se l'utente accetta, fila la risposta (`wiki_write_page`) e appendi a
+   `log.md` con `wiki_append_log`:
 
    ```
    ## [YYYY-MM-DD] query | breve titolo della domanda
@@ -156,15 +168,20 @@ Trigger: l'utente fa una domanda di dominio.
 
 Trigger: l'utente dice "lint" o "controlla la wiki".
 
-Controlla:
+Usa `wiki_list_pages` per ottenere tutte le pagine con frontmatter, `wiki_graph`
+per la mappa dei wikilink, e `wiki_status` per i conteggi per `tipo`/`stato` e
+la data di ultimo aggiornamento. Controlla:
 
 1. **Contraddizioni** tra pagine.
-2. **Pagine stale**: non aggiornate mentre sono arrivate sorgenti correlate.
-3. **Orfani**: pagine senza link in ingresso (escluse `overview.md` e `index.md`).
+2. **Pagine stale**: incrocia `wiki_status` (per `stato: da-rivedere` o
+   `aggiornato` vecchio) con le sorgenti arrivate dopo.
+3. **Orfani**: con `wiki_graph`, pagine mai presenti come target di un link
+   (escluse `overview.md` e `index.md`).
 4. **Concetti senza pagina**: termini ricorrenti in più pagine ma privi di
    pagina propria.
-5. **Cross-reference mancanti**: coppie A/B che dovrebbero linkarsi.
-6. **Frontmatter inconsistente**: tag, tipi, date.
+5. **Cross-reference mancanti**: coppie A/B che dovrebbero linkarsi (verifica
+   con `wiki_graph`).
+6. **Frontmatter inconsistente**: tag, tipi, date — confronta con `wiki_list_pages`.
 7. **Lacune di copertura**: aree del dominio sotto-documentate.
 
 Produci un report sintetico in `analisi/lint-YYYY-MM-DD.md` e appendi a
@@ -265,6 +282,9 @@ e linka le pagine pertinenti.
 - **Tono**: tecnico-descrittivo, conciso, neutro. Niente fronzoli.
 - **Lunghezza**: pagine concetto/soggetto ~50-200 righe. Pagine procedura
   possono essere più lunghe. Se una pagina supera ~400 righe, valuta lo split.
+  Il criterio guida resta comunque la coerenza del frontmatter (§2, Granularità),
+  non solo il conteggio righe: una pagina corta ma con temi/stati misti va
+  comunque splittata.
 - **Normativa**: cita articoli in forma standard (es. `art. 142 c. 8 CdS`).
   Per leggi correlate indica anno e numero (es. `L. 689/1981`).
 - **Doppia natura del dominio**: distingui chiaramente, anche nello stesso

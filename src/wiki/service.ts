@@ -3,6 +3,7 @@ import * as path from 'path'
 import * as crypto from 'crypto'
 import matter from 'gray-matter'
 import lockfile from 'proper-lockfile'
+import { z } from 'zod'
 
 const LOCK_OPTS = {
   retries: { retries: 10, factor: 1.5, minTimeout: 50, maxTimeout: 1000 },
@@ -200,10 +201,39 @@ export function searchPages(opts: SearchOpts): PageMeta[] {
     .map(({ content, links, ...meta }) => meta)
 }
 
+const RESERVED_ROOT_FILES = new Set(['index.md', 'log.md', 'sources.md', 'overview.md'])
+
+const FRONTMATTER_SCHEMA = z.object({
+  tipo: z.enum(['concetto', 'soggetto', 'procedura', 'normativa', 'entita', 'analisi'], {
+    errorMap: () => ({ message: 'deve essere uno tra concetto|soggetto|procedura|normativa|entita|analisi' }),
+  }),
+  tags: z.array(z.string()).min(1, 'deve contenere almeno un tag'),
+  fonti: z.array(z.string()),
+  // YAML interpreta date non quotate (YYYY-MM-DD) come Date: normalizza prima di validare il formato.
+  aggiornato: z.preprocess(
+    (v) => (v instanceof Date ? v.toISOString().slice(0, 10) : v),
+    z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'deve avere formato YYYY-MM-DD'),
+  ),
+  stato: z.enum(['bozza', 'stabile', 'da-rivedere']),
+})
+
+function validateFrontmatter(relPath: string, content: string): void {
+  const isReserved = path.dirname(relPath) === '.' && RESERVED_ROOT_FILES.has(path.basename(relPath))
+  if (isReserved) return
+
+  const { data } = matter(content)
+  const result = FRONTMATTER_SCHEMA.safeParse(data)
+  if (!result.success) {
+    const issues = result.error.issues.map((i) => `${i.path.join('.') || '(radice)'} ${i.message}`).join('; ')
+    throw new Error(`Frontmatter non valido in ${relPath}: ${issues}`)
+  }
+}
+
 export async function writePage(relPath: string, content: string): Promise<void> {
   if (!relPath.endsWith('.md')) throw new Error('Solo file .md sono consentiti')
   const full = path.resolve(WIKI_DIR, relPath)
   if (!full.startsWith(WIKI_DIR + path.sep)) throw new Error('Path fuori dalla wiki directory')
+  validateFrontmatter(relPath, content)
   await withFileLock(full, () => fs.writeFileSync(full, content, 'utf-8'))
 }
 
