@@ -267,10 +267,34 @@ export function fileChecksum(filePath: string): string {
   return crypto.createHash('sha256').update(buf).digest('hex').slice(0, 12)
 }
 
-export function getGraph(): Record<string, string[]> {
-  const graph: Record<string, string[]> = {}
-  for (const p of getAllPages()) graph[p.slug] = p.links
-  return graph
+export interface Graph {
+  forward: Record<string, string[]>
+  reverse: Record<string, string[]>
+  orphans: string[]
+}
+
+const EXCLUDED_FROM_ORPHANS = new Set([...RESERVED_ROOT_FILES].map((f) => f.replace(/\.md$/, '')))
+
+export function getGraph(): Graph {
+  const pages = getAllPages()
+  const forward: Record<string, string[]> = {}
+  const reverse: Record<string, string[]> = {}
+
+  for (const p of pages) {
+    forward[p.slug] = p.links
+    reverse[p.slug] = reverse[p.slug] ?? []
+  }
+  for (const p of pages) {
+    for (const linked of p.links) {
+      reverse[linked] = [...(reverse[linked] ?? []), p.slug]
+    }
+  }
+
+  const orphans = pages
+    .filter((p) => !EXCLUDED_FROM_ORPHANS.has(p.slug) && (reverse[p.slug]?.length ?? 0) === 0)
+    .map((p) => p.slug)
+
+  return { forward, reverse, orphans }
 }
 
 export function getStatus(): WikiStatus {

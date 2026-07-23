@@ -175,14 +175,17 @@ la data di ultimo aggiornamento. Controlla:
 1. **Contraddizioni** tra pagine.
 2. **Pagine stale**: incrocia `wiki_status` (per `stato: da-rivedere` o
    `aggiornato` vecchio) con le sorgenti arrivate dopo.
-3. **Orfani**: con `wiki_graph`, pagine mai presenti come target di un link
-   (escluse `overview.md` e `index.md`).
+3. **Orfani**: leggi direttamente il campo `orphans` di `wiki_graph` (già
+   esclude `index.md`, `log.md`, `sources.md`, `overview.md`).
 4. **Concetti senza pagina**: termini ricorrenti in più pagine ma privi di
    pagina propria.
 5. **Cross-reference mancanti**: coppie A/B che dovrebbero linkarsi (verifica
-   con `wiki_graph`).
+   con il campo `reverse` di `wiki_graph`).
 6. **Frontmatter inconsistente**: tag, tipi, date — confronta con `wiki_list_pages`.
-7. **Lacune di copertura**: aree del dominio sotto-documentate.
+7. **Link rotti**: nel campo `reverse` di `wiki_graph`, uno slug presente come
+   chiave ma assente tra le pagine reali (`wiki_list_pages`) è un wikilink che
+   punta a una pagina non ancora creata.
+8. **Lacune di copertura**: aree del dominio sotto-documentate.
 
 Produci un report sintetico in `analisi/lint-YYYY-MM-DD.md` e appendi a
 `log.md`. **Non correggere automaticamente**: proponi all'utente cosa fixare.
