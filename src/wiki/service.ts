@@ -257,9 +257,17 @@ export async function appendLog(entry: string): Promise<void> {
   await withFileLock(logPath, () => fs.appendFileSync(logPath, '\n' + entry + '\n', 'utf-8'))
 }
 
-export function listRaw(): string[] {
+export interface RawFileInfo {
+  filename: string
+  checksum: string
+}
+
+export function listRaw(): RawFileInfo[] {
   if (!fs.existsSync(RAW_DIR)) return []
-  return fs.readdirSync(RAW_DIR).filter((f) => fs.statSync(path.join(RAW_DIR, f)).isFile())
+  return fs
+    .readdirSync(RAW_DIR)
+    .filter((f) => fs.statSync(path.join(RAW_DIR, f)).isFile())
+    .map((filename) => ({ filename, checksum: fileChecksum(filename) }))
 }
 
 export function readRaw(filename: string): string {

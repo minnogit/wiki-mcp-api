@@ -4,7 +4,10 @@ import { listRaw, readRaw } from '../wiki/service.js'
 
 export const wikiListRawTool = createTool({
   id: 'wiki_list_raw',
-  description: 'Elenca i file nella directory raw/ (sorgenti immutabili)',
+  description:
+    'Elenca i file nella directory raw/ (sorgenti immutabili) insieme al loro checksum SHA256 (12 caratteri) attuale. ' +
+    'Confronta i checksum con quelli registrati in wiki/sources.md per individuare in un colpo solo, senza chiamate ripetute a wiki_checksum, ' +
+    'quali sorgenti sono nuove o sono cambiate rispetto all\'ultimo ingest (utile sia per INGEST sia per il controllo "pagine stale" del LINT).',
   inputSchema: z.object({}),
   execute: async () => listRaw(),
 })

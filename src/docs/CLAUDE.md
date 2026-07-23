@@ -104,6 +104,10 @@ Categorie suggerite per orientare il lavoro. Espandile man mano.
 ## 4. Workflow: INGEST
 
 Trigger: l'utente dice "ingerisci [file]" o segnala un nuovo file in `raw/`.
+Se l'utente chiede di controllare l'intera cartella `raw/` (es. "ci sono
+sorgenti nuove o cambiate?"), usa `wiki_list_raw` per ottenere in un colpo
+solo filename + checksum attuale di tutti i file, e confrontali con
+`wiki/sources.md` invece di chiamare `wiki_checksum` per ognuno.
 
 1. **Calcola il checksum** del file con il tool `wiki_checksum` (primi 12 caratteri dello SHA256).
 2. **Confronta con `wiki/sources.md`**:
@@ -175,8 +179,12 @@ per la mappa dei wikilink, e `wiki_status` per i conteggi per `tipo`/`stato` e
 la data di ultimo aggiornamento. Controlla:
 
 1. **Contraddizioni** tra pagine.
-2. **Pagine stale**: incrocia `wiki_status` (per `stato: da-rivedere` o
-   `aggiornato` vecchio) con le sorgenti arrivate dopo.
+2. **Pagine stale**: due segnali distinti, entrambi da controllare:
+   - `stato: da-rivedere` in `wiki_list_pages`/`wiki_status` (segnale esplicito).
+   - Per ogni pagina, confronta i checksum correnti dei suoi `fonti` (via
+     `wiki_list_raw`, un'unica chiamata per tutta `raw/`) con quelli registrati
+     in `wiki/sources.md`: se un checksum è cambiato dopo l'ultimo `aggiornato`
+     della pagina, la sorgente è stata aggiornata ma la pagina no.
 3. **Orfani**: leggi direttamente il campo `orphans` di `wiki_graph` (già
    esclude `index.md`, `log.md`, `sources.md`, `overview.md`).
 4. **Concetti senza pagina**: termini ricorrenti in più pagine ma privi di
