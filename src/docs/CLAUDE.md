@@ -28,7 +28,8 @@ e co-evolve questo schema. L'agente **non modifica mai** `raw/`.
     ├── procedure/     # workflow e processi (Notifica, Pagamento, Ricorso, ecc.)
     ├── normativa/     # riferimenti normativi (articoli CdS, leggi, circolari)
     ├── modello-dati/  # entità software, relazioni, stati, regole di business
-    └── analisi/       # decisioni di design, casi limite, comparazioni
+    ├── analisi/       # decisioni di design, casi limite, comparazioni
+    └── architettura/  # documenti trasversali a più servizi (usa tipo: analisi)
 ```
 
 Le sottocartelle in `wiki/` sono indicative: aggiungile, rinominale o fondile
@@ -98,6 +99,11 @@ Categorie suggerite per orientare il lavoro. Espandile man mano.
   regole di business, vincoli, codifiche.
 - **analisi/** — documenti di design, decisioni architetturali, casi limite,
   comparazioni tra soluzioni, domande aperte.
+- **architettura/** — documenti trasversali a più servizi dell'ecosistema
+  (mappe di sistema, strategie di migrazione, integrazione tra servizi).
+  Usa `tipo: analisi` come le altre pagine di analisi: la cartella è solo
+  organizzativa, non introduce un valore `tipo` proprio (deciso in
+  `analisi/lint-2026-06-02b.md`, F-03).
 
 ---
 
