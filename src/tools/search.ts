@@ -4,7 +4,10 @@ import { searchPages } from '../wiki/service.js'
 
 export const wikiSearchTool = createTool({
   id: 'wiki_search',
-  description: 'Cerca pagine nella wiki per testo libero, tag, tipo o stato. Il testo libero usa ranking per rilevanza (peso su titolo > tag > contenuto, con IDF), non semplice substring match. Restituisce metadati senza il contenuto completo, ordinati per score decrescente quando `q` è presente.',
+  description:
+    'Cerca pagine nella wiki per testo libero, tag, tipo o stato. Il testo libero usa ranking per rilevanza (peso su titolo > tag > contenuto, con IDF), non semplice substring match. ' +
+    'Restituisce metadati senza il contenuto completo, ordinati per score decrescente quando `q` è presente. Quando `q` produce risultati, ogni voce include anche `snippet`: ' +
+    'un estratto di contesto (~120 caratteri) intorno alla prima occorrenza del termine cercato, utile per valutare la pertinenza senza dover leggere la pagina intera con wiki_read_page.',
   inputSchema: z.object({
     q: z.string().optional().describe('Testo da cercare in titolo e contenuto'),
     tag: z.string().optional().describe('Filtra per tag esatto'),

@@ -146,7 +146,9 @@ Trigger: l'utente fa una domanda di dominio.
    `wiki_search` (per `q`/`tag`/`tipo`/`stato`) o `wiki_list_pages` (per
    categoria) per individuare le pagine candidate senza affidarti solo
    all'indice manuale, che può essere disallineato.
-2. **Leggi le pagine rilevanti** con `wiki_read_page` (di solito 3-8).
+2. **Leggi le pagine rilevanti** con `wiki_read_page` (di solito 3-8). Usa lo
+   `snippet` restituito da `wiki_search` per scartare i candidati poco
+   pertinenti prima di leggerli per intero.
 3. **Sintetizza la risposta** con citazioni esplicite alle pagine wiki e,
    dove rilevante, alle sorgenti `raw/` (consultabili con `wiki_read_raw`).
 4. **Proponi all'utente** se la risposta merita di essere filata:
