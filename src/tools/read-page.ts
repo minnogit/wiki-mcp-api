@@ -4,7 +4,7 @@ import { getPage } from '../wiki/service.js'
 
 export const wikiReadPageTool = createTool({
   id: 'wiki_read_page',
-  description: 'Legge una pagina wiki completa con frontmatter YAML e contenuto Markdown. Usa lo slug relativo, es. "concetti/posizione-debitoria".',
+  description: 'Legge una pagina wiki completa con frontmatter YAML e contenuto Markdown. Usa lo slug relativo, es. "concetti/posizione-debitoria". **Uso via ToolSearch:** Dopo aver caricato con `ToolSearch`, invoca direttamente come `mcp__wiki-mcp-api__wikiReadPage` — il tool diventa immediatamente disponibile per l\'invocazione.',
   inputSchema: z.object({
     slug: z.string().describe('Slug della pagina, es. "concetti/posizione-debitoria" o "analisi/business-rules-engine"'),
   }),
