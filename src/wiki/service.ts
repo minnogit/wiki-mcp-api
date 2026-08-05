@@ -55,6 +55,7 @@ export interface SearchOpts {
   tag?: string
   tipo?: string
   stato?: string
+  topK?: number
 }
 
 export interface WikiStatus {
@@ -180,6 +181,11 @@ export function getPage(slug: string): Page | null {
 
 export function searchPages(opts: SearchOpts): PageMeta[] {
   const allPages = getAllPages()
+  // Senza un limite, una query che matcha molte pagine restituisce un output
+  // potenzialmente enorme (metadati + snippet per ogni pagina), che i client MCP
+  // troncano per proteggere il context window — perdendo magari proprio le pagine
+  // più rilevanti finite in coda. Limitiamo quindi ai topK risultati migliori.
+  const topK = opts.topK ?? 10
 
   const filtered = allPages.filter((p) => {
     if (opts.tipo && p.frontmatter.tipo !== opts.tipo) return false
@@ -188,7 +194,7 @@ export function searchPages(opts: SearchOpts): PageMeta[] {
     return true
   })
 
-  if (!opts.q) return filtered.map(({ content, links, ...meta }) => meta)
+  if (!opts.q) return filtered.slice(0, topK).map(({ content, links, ...meta }) => meta)
 
   const queryTerms = [...new Set(tokenize(opts.q))]
 
@@ -197,6 +203,7 @@ export function searchPages(opts: SearchOpts): PageMeta[] {
     const q = opts.q.toLowerCase()
     return filtered
       .filter((p) => [p.title, p.content, ...(p.frontmatter.tags ?? [])].join(' ').toLowerCase().includes(q))
+      .slice(0, topK)
       .map((p) => ({ ...p, snippet: buildSnippet(p.content, [q]) }))
       .map(({ content, links, ...meta }) => meta)
   }
@@ -213,6 +220,7 @@ export function searchPages(opts: SearchOpts): PageMeta[] {
     .map((p) => ({ ...p, score: scorePage(p, queryTerms, docFreq, allPages.length), snippet: buildSnippet(p.content, queryTerms) }))
     .filter((p) => p.score > 0)
     .sort((a, b) => b.score - a.score)
+    .slice(0, topK)
     .map(({ content, links, ...meta }) => meta)
 }
 
