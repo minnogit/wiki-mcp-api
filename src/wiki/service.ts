@@ -185,12 +185,15 @@ export function searchPages(opts: SearchOpts): PageMeta[] {
   // potenzialmente enorme (metadati + snippet per ogni pagina), che i client MCP
   // troncano per proteggere il context window — perdendo magari proprio le pagine
   // più rilevanti finite in coda. Limitiamo quindi ai topK risultati migliori.
-  const topK = opts.topK ?? 10
+  // Con `q` i risultati sono ordinati per score: i primi 10 sono i più rilevanti.
+  // Senza `q` (solo filtro tag/tipo/stato) non c'è alcun ranking, quindi tagliare
+  // a 10 sarebbe arbitrario — usiamo un default più alto in quel caso.
+  const topK = opts.topK ?? (opts.q ? 10 : 50)
 
   const filtered = allPages.filter((p) => {
     if (opts.tipo && p.frontmatter.tipo !== opts.tipo) return false
     if (opts.stato && p.frontmatter.stato !== opts.stato) return false
-    if (opts.tag && !p.frontmatter.tags?.includes(opts.tag)) return false
+    if (opts.tag && !p.frontmatter.tags?.some((t) => t.toLowerCase() === opts.tag!.toLowerCase())) return false
     return true
   })
 
