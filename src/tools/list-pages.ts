@@ -1,6 +1,6 @@
 import { createTool } from '@mastra/core/tools'
 import { z } from 'zod'
-import { searchPages } from '../wiki/service.js'
+import { getAllPages } from '../wiki/service.js'
 
 export const wikiListPagesTool = createTool({
   id: 'wiki_list_pages',
@@ -9,7 +9,7 @@ export const wikiListPagesTool = createTool({
     categoria: z.string().optional().describe('Sottocartella da filtrare, es. "concetti", "analisi", "procedure"'),
   }),
   execute: async ({ categoria }) => {
-    const pages = searchPages({})
+    const pages = getAllPages().map(({ content, links, ...meta }) => meta)
     if (!categoria) return pages
     return pages.filter(p => p.path.startsWith(categoria + '/'))
   },
