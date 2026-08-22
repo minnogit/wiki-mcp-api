@@ -9,7 +9,7 @@ export const wikiReadPageTool = createTool({
     slug: z.string().describe('Slug della pagina, es. "concetti/posizione-debitoria" o "analisi/business-rules-engine"'),
   }),
   execute: async ({ slug }) => {
-    const page = getPage(slug)
+    const page = await getPage(slug)
     if (!page) return { error: `Pagina non trovata: ${slug}` }
     return page
   },

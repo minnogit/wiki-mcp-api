@@ -1,4 +1,5 @@
 import * as fs from 'fs'
+import * as fsp from 'fs/promises'
 import * as path from 'path'
 import * as crypto from 'crypto'
 import matter from 'gray-matter'
@@ -10,12 +11,23 @@ const LOCK_OPTS = {
   stale: 10_000,
 }
 
-async function withFileLock<T>(targetPath: string, fn: () => T): Promise<T> {
-  fs.mkdirSync(path.dirname(targetPath), { recursive: true })
-  if (!fs.existsSync(targetPath)) fs.writeFileSync(targetPath, '', 'utf-8')
+function isEnoent(e: unknown): boolean {
+  return (e as NodeJS.ErrnoException)?.code === 'ENOENT'
+}
+
+function exists(p: string): Promise<boolean> {
+  return fsp.access(p).then(
+    () => true,
+    () => false,
+  )
+}
+
+async function withFileLock<T>(targetPath: string, fn: () => Promise<T>): Promise<T> {
+  await fsp.mkdir(path.dirname(targetPath), { recursive: true })
+  if (!(await exists(targetPath))) await fsp.writeFile(targetPath, '', 'utf-8')
   const release = await lockfile.lock(targetPath, LOCK_OPTS)
   try {
-    return fn()
+    return await fn()
   } finally {
     await release()
   }
@@ -132,14 +144,19 @@ function extractWikilinks(content: string): string[] {
   return [...new Set(links)]
 }
 
-function scanDir(dir: string, base: string): string[] {
-  if (!fs.existsSync(dir)) return []
-  const entries = fs.readdirSync(dir, { withFileTypes: true })
+async function scanDir(dir: string, base: string): Promise<string[]> {
+  let entries: fs.Dirent[]
+  try {
+    entries = await fsp.readdir(dir, { withFileTypes: true })
+  } catch (e) {
+    if (isEnoent(e)) return []
+    throw e
+  }
   const files: string[] = []
   for (const entry of entries) {
     if (entry.name.startsWith('.')) continue
     const full = path.join(dir, entry.name)
-    if (entry.isDirectory()) files.push(...scanDir(full, base))
+    if (entry.isDirectory()) files.push(...(await scanDir(full, base)))
     else if (entry.isFile() && entry.name.endsWith('.md')) files.push(path.relative(base, full))
   }
   return files
@@ -152,8 +169,8 @@ function scanDir(dir: string, base: string): string[] {
 // trattare come immutabili (nessun consumer le muta mai in place).
 const pageCache = new Map<string, { key: string; page: Page }>()
 
-function parsePage(relPath: string, full: string, stat: fs.Stats): Page {
-  const raw = fs.readFileSync(full, 'utf-8')
+async function parsePage(relPath: string, full: string, stat: fs.Stats): Promise<Page> {
+  const raw = await fsp.readFile(full, 'utf-8')
   const { data, content } = matter(raw)
   return {
     path: relPath,
@@ -172,37 +189,43 @@ function parsePage(relPath: string, full: string, stat: fs.Stats): Page {
   }
 }
 
-function parsePageCached(relPath: string, full: string): Page {
-  const stat = fs.statSync(full)
+async function parsePageCached(relPath: string, full: string): Promise<Page> {
+  const stat = await fsp.stat(full)
   const key = `${stat.mtimeMs}:${stat.size}`
   const hit = pageCache.get(full)
   if (hit && hit.key === key) return hit.page
-  const page = parsePage(relPath, full, stat)
+  const page = await parsePage(relPath, full, stat)
   pageCache.set(full, { key, page })
   return page
 }
 
-export function getAllPages(): Page[] {
+export async function getAllPages(): Promise<Page[]> {
   const seen = new Set<string>()
-  const pages = scanDir(WIKI_DIR, WIKI_DIR).map((rel) => {
-    const full = path.join(WIKI_DIR, rel)
-    seen.add(full)
-    return parsePageCached(rel, full)
-  })
+  const pages = await Promise.all(
+    (await scanDir(WIKI_DIR, WIKI_DIR)).map(async (rel) => {
+      const full = path.join(WIKI_DIR, rel)
+      seen.add(full)
+      return parsePageCached(rel, full)
+    }),
+  )
   for (const key of pageCache.keys()) if (!seen.has(key)) pageCache.delete(key)
   return pages
 }
 
-export function getPage(slug: string): Page | null {
+export async function getPage(slug: string): Promise<Page | null> {
   const relPath = slug.endsWith('.md') ? slug : slug + '.md'
   const full = path.join(WIKI_DIR, relPath)
-  if (!fs.existsSync(full)) return null
   if (!full.startsWith(WIKI_DIR + path.sep)) return null
-  return parsePageCached(relPath, full)
+  try {
+    return await parsePageCached(relPath, full)
+  } catch (e) {
+    if (isEnoent(e)) return null
+    throw e
+  }
 }
 
-export function searchPages(opts: SearchOpts): PageMeta[] {
-  const allPages = getAllPages()
+export async function searchPages(opts: SearchOpts): Promise<PageMeta[]> {
+  const allPages = await getAllPages()
   // Senza un limite, una query che matcha molte pagine restituisce un output
   // potenzialmente enorme (metadati + snippet per ogni pagina), che i client MCP
   // troncano per proteggere il context window — perdendo magari proprio le pagine
@@ -282,12 +305,12 @@ export async function writePage(relPath: string, content: string): Promise<void>
   const full = path.resolve(WIKI_DIR, relPath)
   if (!full.startsWith(WIKI_DIR + path.sep)) throw new Error('Path fuori dalla wiki directory')
   validateFrontmatter(relPath, content)
-  await withFileLock(full, () => fs.writeFileSync(full, content, 'utf-8'))
+  await withFileLock(full, () => fsp.writeFile(full, content, 'utf-8'))
 }
 
 export async function appendLog(entry: string): Promise<void> {
   const logPath = path.join(WIKI_DIR, 'log.md')
-  await withFileLock(logPath, () => fs.appendFileSync(logPath, '\n' + entry + '\n', 'utf-8'))
+  await withFileLock(logPath, () => fsp.appendFile(logPath, '\n' + entry + '\n', 'utf-8'))
 }
 
 export interface RawFileInfo {
@@ -295,38 +318,58 @@ export interface RawFileInfo {
   checksum: string
 }
 
-export function listRaw(): RawFileInfo[] {
-  if (!fs.existsSync(RAW_DIR)) return []
-  return fs
-    .readdirSync(RAW_DIR)
-    .filter((f) => fs.statSync(path.join(RAW_DIR, f)).isFile())
-    .map((filename) => ({ filename, checksum: checksumIn(RAW_DIR, filename) }))
+export async function listRaw(): Promise<RawFileInfo[]> {
+  let names: string[]
+  try {
+    names = await fsp.readdir(RAW_DIR)
+  } catch (e) {
+    if (isEnoent(e)) return []
+    throw e
+  }
+  const infos = await Promise.all(
+    names.map(async (filename) => {
+      if (!(await fsp.stat(path.join(RAW_DIR, filename))).isFile()) return null
+      return { filename, checksum: await checksumIn(RAW_DIR, filename) }
+    }),
+  )
+  return infos.filter((x): x is RawFileInfo => x !== null)
 }
 
-export function readRaw(filename: string): string {
+export async function readRaw(filename: string): Promise<string> {
   if (filename.includes('/') || filename.includes('..')) throw new Error('Filename non valido')
   const full = path.join(RAW_DIR, filename)
-  if (!fs.existsSync(full)) throw new Error(`File raw non trovato: ${filename}`)
-  return fs.readFileSync(full, 'utf-8')
+  try {
+    return await fsp.readFile(full, 'utf-8')
+  } catch (e) {
+    if (isEnoent(e)) throw new Error(`File raw non trovato: ${filename}`)
+    throw e
+  }
 }
 
-function checksumIn(dir: string, relPath: string): string {
+async function checksumIn(dir: string, relPath: string): Promise<string> {
   const full = path.resolve(dir, relPath)
   if (!full.startsWith(dir + path.sep)) throw new Error('Path fuori dalla directory consentita')
-  if (!fs.existsSync(full) || !fs.statSync(full).isFile()) throw new Error(`File non trovato: ${relPath}`)
-  const buf = fs.readFileSync(full)
+  let st: fs.Stats
+  try {
+    st = await fsp.stat(full)
+  } catch (e) {
+    if (isEnoent(e)) throw new Error(`File non trovato: ${relPath}`)
+    throw e
+  }
+  if (!st.isFile()) throw new Error(`File non trovato: ${relPath}`)
+  const buf = await fsp.readFile(full)
   return crypto.createHash('sha256').update(buf).digest('hex').slice(0, 12)
 }
 
 // Accetta solo path relativi a wiki/ o raw/: in caso di omonimia vince la copia in
 // wiki/ (fonte già ingerita). Niente path assoluti, per coerenza col boundary
 // wiki/ scrivibile / raw/ leggibile.
-export function fileChecksum(relPath: string): string {
+export async function fileChecksum(relPath: string): Promise<string> {
   if (path.isAbsolute(relPath)) throw new Error('Solo path relativi a wiki/ o raw/ sono consentiti')
   const w = path.resolve(WIKI_DIR, relPath)
   const r = path.resolve(RAW_DIR, relPath)
-  if (w.startsWith(WIKI_DIR + path.sep) && fs.existsSync(w)) return checksumIn(WIKI_DIR, relPath)
-  if (r.startsWith(RAW_DIR + path.sep) && fs.existsSync(r)) return checksumIn(RAW_DIR, relPath)
+  if (w.startsWith(WIKI_DIR + path.sep) && (await exists(w))) return checksumIn(WIKI_DIR, relPath)
+  if (r.startsWith(RAW_DIR + path.sep) && (await exists(r))) return checksumIn(RAW_DIR, relPath)
   throw new Error(`File non trovato: ${relPath}`)
 }
 
@@ -338,8 +381,8 @@ export interface Graph {
 
 const EXCLUDED_FROM_ORPHANS = new Set([...RESERVED_ROOT_FILES].map((f) => f.replace(/\.md$/, '')))
 
-export function getGraph(): Graph {
-  const pages = getAllPages()
+export async function getGraph(): Promise<Graph> {
+  const pages = await getAllPages()
   const forward: Record<string, string[]> = {}
   const reverse: Record<string, string[]> = {}
 
@@ -360,8 +403,8 @@ export function getGraph(): Graph {
   return { forward, reverse, orphans }
 }
 
-export function getStatus(): WikiStatus {
-  const pages = getAllPages()
+export async function getStatus(): Promise<WikiStatus> {
+  const pages = await getAllPages()
   const byTipo: Record<string, number> = {}
   const byStato: Record<string, number> = {}
   let lastUpdated = ''
