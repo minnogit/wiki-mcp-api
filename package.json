@@ -10,8 +10,8 @@
     "dev": "tsx src/stdio.ts"
   },
   "dependencies": {
-    "@mastra/core": "latest",
-    "@mastra/mcp": "latest",
+    "@mastra/core": "^1.61.0",
+    "@mastra/mcp": "^1.17.1",
     "dotenv": "^16.0.0",
     "gray-matter": "^4.0.3",
     "proper-lockfile": "^4.1.2",
