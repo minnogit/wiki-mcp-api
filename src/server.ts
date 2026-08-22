@@ -9,12 +9,20 @@ import { wikiChecksumTool } from './tools/checksum.js'
 import { wikiGraphTool } from './tools/graph.js'
 import { wikiStatusTool } from './tools/status.js'
 
-export const server = new MCPServer({
-  id: 'wiki-mcp',
-  name: 'LLM Wiki MCP Server',
-  version: '0.1.0',
-  description: 'Ponte MCP tra agenti AI e la wiki di dominio (verbalizzazione Codice della Strada)',
-  instructions: `
+// Tool di sola lettura: sono gli unici esposti al server HTTP remoto (src/http.ts).
+// I tool di scrittura (wikiWritePage, wikiAppendLog) restano disponibili solo via stdio locale.
+const readOnlyTools = {
+  wikiSearch: wikiSearchTool,
+  wikiReadPage: wikiReadPageTool,
+  wikiListPages: wikiListPagesTool,
+  wikiListRaw: wikiListRawTool,
+  wikiReadRaw: wikiReadRawTool,
+  wikiChecksum: wikiChecksumTool,
+  wikiGraph: wikiGraphTool,
+  wikiStatus: wikiStatusTool,
+}
+
+const instructions = `
 Questa wiki documenta il dominio del software PLService per la verbalizzazione del Codice della Strada italiano.
 
 Workflow principali:
@@ -27,17 +35,29 @@ Regole:
 - wiki_write_page valida il frontmatter (tipo/tags/fonti/aggiornato/stato); index.md, log.md, sources.md e overview.md ne sono esenti
 - wiki_read_raw è read-only
 - I path delle pagine sono relativi alla wiki dir (es. "concetti/verbale.md")
-  `.trim(),
+`.trim()
+
+// Server completo (lettura + scrittura), esposto solo via stdio locale (src/stdio.ts).
+export const server = new MCPServer({
+  id: 'wiki-mcp',
+  name: 'LLM Wiki MCP Server',
+  version: '0.1.0',
+  description: 'Ponte MCP tra agenti AI e la wiki di dominio (verbalizzazione Codice della Strada)',
+  instructions,
   tools: {
-    wikiSearch: wikiSearchTool,
-    wikiReadPage: wikiReadPageTool,
-    wikiListPages: wikiListPagesTool,
+    ...readOnlyTools,
     wikiWritePage: wikiWritePageTool,
     wikiAppendLog: wikiAppendLogTool,
-    wikiListRaw: wikiListRawTool,
-    wikiReadRaw: wikiReadRawTool,
-    wikiChecksum: wikiChecksumTool,
-    wikiGraph: wikiGraphTool,
-    wikiStatus: wikiStatusTool,
   },
+})
+
+// Server di sola lettura, esposto via HTTP per l'accesso remoto (src/http.ts).
+// Non include wikiWritePage/wikiAppendLog: la scrittura resta possibile solo in locale.
+export const remoteServer = new MCPServer({
+  id: 'wiki-mcp-readonly',
+  name: 'LLM Wiki MCP Server (read-only)',
+  version: '0.1.0',
+  description: 'Ponte MCP di sola lettura verso la wiki di dominio (verbalizzazione Codice della Strada)',
+  instructions: `${instructions}\n\nQuesta istanza è di sola lettura: wiki_write_page e wiki_append_log non sono disponibili qui.`,
+  tools: readOnlyTools,
 })

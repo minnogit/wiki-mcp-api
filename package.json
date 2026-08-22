@@ -5,9 +5,11 @@
   "type": "module",
   "bin": "dist/stdio.js",
   "scripts": {
-    "build": "tsup src/stdio.ts --format esm --no-splitting --dts && node -e \"const fs=require('fs');const f='dist/stdio.js';fs.writeFileSync(f,'#!/usr/bin/env node\\n'+fs.readFileSync(f,'utf8'));\" && chmod +x dist/stdio.js",
+    "build": "tsup src/stdio.ts src/http.ts --format esm --no-splitting --dts && node -e \"const fs=require('fs');const f='dist/stdio.js';fs.writeFileSync(f,'#!/usr/bin/env node\\n'+fs.readFileSync(f,'utf8'));\" && chmod +x dist/stdio.js",
     "start": "node dist/stdio.js",
+    "start:http": "node dist/http.js",
     "dev": "tsx src/stdio.ts",
+    "dev:http": "tsx src/http.ts",
     "test": "vitest run"
   },
   "dependencies": {

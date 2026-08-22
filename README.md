@@ -1,6 +1,6 @@
 # wiki-mcp-api
 
-Server MCP (Model Context Protocol) che espone la wiki di dominio LLM Wiki agli agenti AI (Claude, OpenCode, ecc.) tramite stdio.
+Server MCP (Model Context Protocol) che espone la wiki di dominio LLM Wiki agli agenti AI (Claude, OpenCode, ecc.) tramite stdio (locale, lettura+scrittura) o HTTP (remoto, sola lettura).
 
 ## Descrizione
 
@@ -98,6 +98,28 @@ Aggiungi il server in `opencode.json` (globale in `~/.config/opencode/opencode.j
   }
 }
 ```
+
+## Accesso remoto (sola lettura)
+
+Oltre allo stdio locale, il progetto espone un secondo entrypoint (`src/http.ts`) pensato per l'accesso da remoto: monta solo i tool di sola lettura (`wiki_search`, `wiki_read_page`, `wiki_list_pages`, `wiki_list_raw`, `wiki_read_raw`, `wiki_checksum`, `wiki_graph`, `wiki_status`). `wiki_write_page` e `wiki_append_log` restano disponibili **solo** via stdio locale: chi accede da remoto non può scrivere sulla wiki.
+
+Configura in `.env`:
+
+- `MCP_HTTP_PORT` — porta di ascolto (default `3000`)
+- `MCP_HTTP_TOKEN` — token Bearer richiesto per autenticare le richieste; il processo si rifiuta di avviarsi se assente. Genera un valore casuale, es. `openssl rand -hex 32`.
+
+Avvio:
+
+```bash
+npm run dev:http     # sviluppo (tsx)
+npm run build && npm run start:http   # produzione
+```
+
+Il server ascolta su `http://<host>:<porta>/mcp` e richiede l'header `Authorization: Bearer <MCP_HTTP_TOKEN>` su ogni richiesta.
+
+Per l'esposizione su internet (non solo rete privata/VPN) metti un reverse proxy con TLS davanti (es. Caddy, nginx, Cloudflare Tunnel) — questo server non gestisce HTTPS direttamente.
+
+Un agente **remoto** configura l'endpoint HTTP con il token; un agente **locale** continua a usare solo la configurazione stdio (vedi sopra), che include già lettura e scrittura — non serve configurare entrambi i trasporti sulla stessa macchina.
 
 ## Licenza
 
