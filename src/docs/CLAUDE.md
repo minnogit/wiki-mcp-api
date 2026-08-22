@@ -1,8 +1,19 @@
-# Wiki – Dominio: Verbalizzazione Codice della Strada
+# Wiki – Dominio: <nome del dominio>
+
+> **Questo è un file template.** Copialo nella directory della tua wiki
+> (accanto a `raw/` e `wiki/`, puntate da `WIKI_PATH`/`RAW_PATH`) e
+> personalizza ogni sezione: il titolo, la descrizione del dominio, gli
+> esempi di pagine/tag/categorie. Le parti tra `<...>` vanno sostituite; il
+> resto (workflow INGEST/QUERY/LINT, forma del frontmatter, tool MCP da
+> usare) è pensato per restare valido per qualunque dominio. La lingua dei
+> contenuti (qui l'italiano, a titolo di esempio) è anch'essa una scelta del
+> progetto: cambiala se serve, basta restare coerenti in tutta la wiki.
 
 Questa è la configurazione che guida l'agente nella manutenzione di una wiki
-personale di concetti di dominio per un software gestionale di **verbalizzazione
-del Codice della Strada (CdS) italiano**.
+personale di concetti di dominio per <descrivi qui in una riga il dominio
+applicativo — es. "un CRM immobiliare", "un sistema di fatturazione SaaS",
+"un gioco da tavolo e le sue regole", "una codebase e le sue convenzioni
+architetturali">.
 
 L'agente possiede e mantiene la wiki. L'utente cura le sorgenti, pone domande,
 e co-evolve questo schema. L'agente **non modifica mai** `raw/`.
@@ -23,41 +34,77 @@ e co-evolve questo schema. L'agente **non modifica mai** `raw/`.
     ├── log.md         # registro cronologico delle operazioni
     ├── overview.md    # sintesi corrente del dominio
     ├── sources.md     # registro sorgenti processate con checksum
-    ├── concetti/      # concetti di dominio (Verbale, Sanzione, ecc.)
-    ├── soggetti/      # ruoli e attori (Trasgressore, Agente accertatore, ecc.)
-    ├── procedure/     # workflow e processi (Notifica, Pagamento, Ricorso, ecc.)
-    ├── normativa/     # riferimenti normativi (articoli CdS, leggi, circolari)
+    ├── concetti/      # concetti di dominio (<Entità-1>, <Entità-2>, ecc.)
+    ├── soggetti/      # ruoli e attori (<Ruolo-1>, <Ruolo-2>, ecc.)
+    ├── procedure/     # workflow e processi (<Processo-1>, <Processo-2>, ecc.)
+    ├── normativa/     # riferimenti normativi/regolamentari, se il dominio ne ha
     ├── modello-dati/  # entità software, relazioni, stati, regole di business
     ├── analisi/       # decisioni di design, casi limite, comparazioni
     └── architettura/  # documenti trasversali a più servizi (usa tipo: analisi)
 ```
 
 Le sottocartelle in `wiki/` sono indicative: aggiungile, rinominale o fondile
-quando emergono nuove categorie. Non creare cartelle vuote "per il futuro".
+quando emergono nuove categorie, e rimuovi quelle che non si applicano al tuo
+dominio (es. `normativa/` non serve se non c'è alcun aspetto regolamentare).
+Non creare cartelle vuote "per il futuro".
 
 ---
 
 ## 2. Convenzioni delle pagine
 
-**Naming**: `kebab-case` in italiano. Esempi: `verbale-di-accertamento.md`,
-`decurtazione-punti.md`, `obbligato-in-solido.md`. Niente abbreviazioni se non
-sono di uso comune nel dominio (CdS, GdP, ecc. vanno bene).
+**Naming**: `kebab-case` nella lingua scelta per il progetto. Esempi:
+`<entita-principale>.md`, `<azione-chiave>.md`, `<ruolo-chiave>.md`. Niente
+abbreviazioni se non sono di uso comune nel dominio.
 
 **Frontmatter YAML** in cima a ogni pagina:
 
 ```yaml
 ---
 tipo: concetto | soggetto | procedura | normativa | entita | analisi
-tags: [verbale, sanzione, ...]
+tags: [<tag-1>, <tag-2>, ...]
 fonti: [raw/nome-file-1.md, raw/nome-file-2.md]
 aggiornato: YYYY-MM-DD
 stato: bozza | stabile | da-rivedere
 ---
 ```
 
+I valori di `tipo` sono un punto di partenza plausibile per domini con una
+componente regolamentare/normativa; adattali al tuo — rimuovi `normativa` se
+non si applica, aggiungi altri valori se il dominio ha categorie proprie che
+gli enum sopra non colgono (basta restare coerenti nel tempo).
+
+**Tag**: prima di inventare un tag nuovo, controlla se esiste già uno
+equivalente (`wiki_search` senza `q`, o scorri `tags:` di pagine simili) e
+riusalo — anche se il nome che avresti scelto tu è leggermente diverso
+(plurale/singolare, sinonimo). Preferisci il **singolare** per i tag
+concettuali, salvo quando il plurale identifica un'entità di codice con quel
+nome esatto (es. una classe chiamata `Ordini`) o una collezione (es.
+`regole-ordini` per un catalogo di regole). Un tag usato una sola volta non
+è un problema in sé (serve comunque da parola chiave per la ricerca
+testuale); lo è quando **duplica** — con parola diversa o forma diversa — un
+tag già usato altrove per lo stesso concetto: una wiki reale si è già
+trovata con coppie come `notifica`/`notifiche`, `posizione-debitoria`/
+`posizioni-debitorie`, `transazione`/`transazioni` a indicare la stessa cosa
+su pagine diverse, rendendo inutile il filtro per tag esatto. Attenzione
+anche al caso opposto: due concetti distinti che condividono una parola non
+vanno forzati sotto lo stesso tag solo per assonanza (es. una "notifica" di
+dominio inviata a un utente finale vs una "notifica" UI/toast mostrata
+nell'interfaccia — restano tag distinti anche se la parola è la stessa).
+Rivedi periodicamente (in un LINT) la distribuzione dei tag: un solo tag
+usato sulla quasi totalità delle pagine è spesso il nome del progetto/dominio
+stesso — non è un errore, ma non serve a filtrare nulla, e non va confuso col
+problema dei quasi-duplicati.
+
+Se lavori con un issue tracker (Jira, GitHub Issues, ecc.), **non taggare i
+riferimenti ai singoli ticket** (es. `PROJ-1234`): un ticket compare tipicamente
+su 1-2 pagine, quindi il tag non raggruppa nulla, e il codice da solo non è
+informativo senza aprire il tracker. Il riferimento resta comunque utile **nel
+corpo della pagina**, in linea vicino all'affermazione che documenta — è lì
+che va, non nel frontmatter.
+
 **Granularità**: una pagina = un solo `tipo` e un solo tema coerente.
 Se un argomento contiene sotto-concetti con natura o stato diversi (es. un
-aspetto "stabile" e uno ancora "da-rivedere", o un concetto giuridico insieme
+aspetto "stabile" e uno ancora "da-rivedere", o un concetto di dominio insieme
 al suo modello software), valuta lo split in più pagine linkate invece di
 un frontmatter unico che li appiattisce. Frontmatter e contenuto coerenti
 rendono `wiki_search` (filtri per tag/tipo/stato + ranking sul contenuto)
@@ -68,7 +115,7 @@ affidabile; una pagina che mescola temi diversi diluisce entrambi.
 1. Titolo `H1` = nome leggibile della pagina
 2. Sintesi in 2-4 righe
 3. Sezioni di dettaglio
-4. `## Riferimenti normativi` quando applicabile (articoli CdS, leggi)
+4. `## Riferimenti normativi` quando applicabile (solo per domini regolamentati)
 5. `## Collegamenti` con wikilink alle pagine correlate
 6. `## Fonti` con riferimenti ai file in `raw/`
 
@@ -76,34 +123,36 @@ affidabile; una pagina che mescola temi diversi diluisce entrambi.
 per i collegamenti interni. Per link a file in `raw/` usa il path relativo.
 
 **Citazioni**: quando un'affermazione viene da una sorgente, indicala in linea:
-`(fonte: raw/analisi-notifiche.md)`. Per affermazioni normative, cita l'articolo:
-`(art. 142 c. 8 CdS)`.
+`(fonte: raw/analisi-esempio.md)`. Per affermazioni normative/regolamentari,
+cita la fonte precisa nel formato standard del tuo dominio (es. un articolo
+di legge, una clausola contrattuale, una sezione di uno standard).
 
 ---
 
 ## 3. Tassonomia di base
 
-Categorie suggerite per orientare il lavoro. Espandile man mano.
+Categorie suggerite per orientare il lavoro. Sono un esempio generico:
+sostituisci gli elenchi con i concetti/ruoli/processi reali del tuo dominio,
+ed espandi man mano che emergono.
 
-- **concetti/** — entità concettuali del dominio: Verbale, Sanzione amministrativa,
-  Trasgressione, Accertamento, Notifica, Decurtazione punti, Ricorso, ecc.
-- **soggetti/** — attori coinvolti: Trasgressore, Conducente, Proprietario,
-  Obbligato in solido, Agente accertatore, Organo accertatore, Prefetto,
-  Giudice di Pace, ecc.
-- **procedure/** — processi operativi: emissione verbale, notifica, pagamento
-  in misura ridotta, rateazione, ricorso al Prefetto, ricorso al GdP,
-  decurtazione punti, misure cautelari (fermo, sequestro), ecc.
-- **normativa/** — articoli CdS (D.Lgs. 285/1992), leggi correlate (L. 689/1981
-  ecc.), regolamenti, circolari ministeriali, sentenze rilevanti.
-- **modello-dati/** — entità software, attributi, relazioni, stati, transizioni,
-  regole di business, vincoli, codifiche.
+- **concetti/** — entità concettuali del dominio: <esempio: per un CRM
+  immobiliare sarebbero Immobile, Trattativa, Mandato, Provvigione; per un
+  gioco da tavolo, Carta, Turno, Punteggio>.
+- **soggetti/** — attori coinvolti: <esempio: Cliente, Agente, Operatore,
+  Amministratore — chiunque compia o subisca un'azione nel dominio>.
+- **procedure/** — processi operativi: <esempio: onboarding di un cliente,
+  chiusura di una trattativa, elaborazione di un rimborso>.
+- **normativa/** — riferimenti normativi/regolamentari, se il dominio ne ha
+  (leggi, regolamenti, policy interne, standard di settore, sentenze
+  rilevanti). Ometti questa cartella se non si applica.
+- **modello-dati/** — entità software, attributi, relazioni, stati,
+  transizioni, regole di business, vincoli, codifiche.
 - **analisi/** — documenti di design, decisioni architetturali, casi limite,
   comparazioni tra soluzioni, domande aperte.
 - **architettura/** — documenti trasversali a più servizi dell'ecosistema
   (mappe di sistema, strategie di migrazione, integrazione tra servizi).
   Usa `tipo: analisi` come le altre pagine di analisi: la cartella è solo
-  organizzativa, non introduce un valore `tipo` proprio (deciso in
-  `analisi/lint-2026-06-02b.md`, F-03).
+  organizzativa, non introduce un valore `tipo` proprio.
 
 ---
 
@@ -198,6 +247,11 @@ la data di ultimo aggiornamento. Controlla:
 5. **Cross-reference mancanti**: coppie A/B che dovrebbero linkarsi (verifica
    con il campo `reverse` di `wiki_graph`).
 6. **Frontmatter inconsistente**: tag, tipi, date — confronta con `wiki_list_pages`.
+   Per i tag, oltre a valori palesemente sbagliati, controlla la
+   distribuzione: pochi tag usati su molte pagine e una lunga coda di tag
+   usati una sola volta è normale, ma cerca specificamente **coppie
+   quasi-duplicate** (singolare/plurale, sinonimi) che spezzano un cluster
+   reale in due — vedi §2 sopra.
 7. **Link rotti**: nel campo `reverse` di `wiki_graph`, uno slug presente come
    chiave ma assente tra le pagine reali (`wiki_list_pages`) è un wikilink che
    punta a una pagina non ancora creata.
@@ -217,11 +271,11 @@ breve descrizione e conteggio fonti:
 # Index
 
 ## Concetti
-- [[verbale-di-accertamento]] — atto formale dell'accertamento (3 fonti)
-- [[sanzione-amministrativa]] — ...
+- [[<entita-1>]] — <breve descrizione> (3 fonti)
+- [[<entita-2>]] — ...
 
 ## Soggetti
-- [[trasgressore]] — soggetto a cui è imputata la violazione (2 fonti)
+- [[<ruolo-1>]] — <breve descrizione> (2 fonti)
 
 ## Procedure
 - ...
@@ -267,7 +321,7 @@ Formato:
 
 | File | SHA256 (12 car.) | Ultimo ingest | Pagine toccate |
 |------|-----------------|---------------|----------------|
-| raw/foo.md | a3f1b2c4d5e6 | 2026-06-28 | [[verbale]], [[sanzione]] |
+| raw/foo.md | a3f1b2c4d5e6 | 2026-06-28 | [[entita-1]], [[entita-2]] |
 ```
 
 - Il checksum è calcolato con `sha256sum` (primi 12 caratteri dell'hash).
@@ -294,9 +348,11 @@ e linka le pagine pertinenti.
 
 ## 11. Lingua e stile
 
-- **Lingua**: italiano per contenuti wiki, frontmatter, `log.md` e `index.md`.
-- **Terminologia**: usa termini ufficiali del CdS e della prassi (verbale,
-  sanzione, decurtazione, ecc.). Mantieni un glossario inline nelle pagine
+- **Lingua**: scegli una lingua per contenuti wiki, frontmatter, `log.md` e
+  `index.md`, e mantienila coerente in tutto il progetto (qui si esemplifica
+  in italiano, ma il criterio vale per qualunque lingua).
+- **Terminologia**: usa i termini ufficiali/di uso comune nel tuo dominio,
+  non parafrasi generiche. Mantieni un glossario inline nelle pagine
   concetto quando emergono sinonimi.
 - **Tono**: tecnico-descrittivo, conciso, neutro. Niente fronzoli.
 - **Lunghezza**: pagine concetto/soggetto ~50-200 righe. Pagine procedura
@@ -304,12 +360,17 @@ e linka le pagine pertinenti.
   Il criterio guida resta comunque la coerenza del frontmatter (§2, Granularità),
   non solo il conteggio righe: una pagina corta ma con temi/stati misti va
   comunque splittata.
-- **Normativa**: cita articoli in forma standard (es. `art. 142 c. 8 CdS`).
-  Per leggi correlate indica anno e numero (es. `L. 689/1981`).
-- **Doppia natura del dominio**: distingui chiaramente, anche nello stesso
-  argomento, tra (a) il concetto giuridico/normativo e (b) come il software
-  lo modella. Quando utile, usa due sezioni `## Concetto` e `## Modello`
-  nella stessa pagina, oppure due pagine separate linkate fra loro.
+- **Riferimenti a fonti normative/regolamentari**: se il dominio ne ha, cita
+  nel formato standard del settore (es. articolo di legge, sezione di uno
+  standard, clausola contrattuale) — definisci qui la forma canonica e
+  usala ovunque nella wiki.
+- **Doppia natura del dominio** (se applicabile): molti domini hanno una
+  componente "di specifica" (normativa, contrattuale, di business) distinta
+  da come il software la implementa. Se è il tuo caso, distingui chiaramente,
+  anche nello stesso argomento, tra (a) il concetto di dominio/specifica e
+  (b) come il software lo modella. Quando utile, usa due sezioni
+  `## Concetto` e `## Modello` nella stessa pagina, oppure due pagine
+  separate linkate fra loro.
 
 ---
 
