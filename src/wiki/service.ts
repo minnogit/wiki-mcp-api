@@ -169,6 +169,25 @@ async function scanDir(dir: string, base: string): Promise<string[]> {
 // trattare come immutabili (nessun consumer le muta mai in place).
 const pageCache = new Map<string, { key: string; page: Page }>()
 
+// Fuso con cui rendere le date derivate dall'mtime (YYYY-MM-DD). Di default si usa
+// quello del processo, ma su deploy remoti il fuso della macchina non c'entra con
+// quello di chi usa la wiki: WIKI_TZ (es. "Europe/Rome") lo fissa esplicitamente.
+const WIKI_TZ = process.env.WIKI_TZ
+
+function instantToDate(ms: number): string {
+  const pad = (n: number): string => String(n).padStart(2, '0')
+  const d = new Date(ms)
+  if (!WIKI_TZ) return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: WIKI_TZ,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(d)
+  const get = (t: string): string => parts.find((p) => p.type === t)?.value ?? ''
+  return `${get('year')}-${get('month')}-${get('day')}`
+}
+
 async function parsePage(relPath: string, full: string, stat: fs.Stats): Promise<Page> {
   const raw = await fsp.readFile(full, 'utf-8')
   const { data, content } = matter(raw)
@@ -185,7 +204,7 @@ async function parsePage(relPath: string, full: string, stat: fs.Stats): Promise
     },
     content: content.trim(),
     links: extractWikilinks(content),
-    updatedAt: stat.mtime.toISOString().split('T')[0],
+    updatedAt: instantToDate(stat.mtimeMs),
   }
 }
 
@@ -403,6 +422,10 @@ export async function getGraph(): Promise<Graph> {
   return { forward, reverse, orphans }
 }
 
+// La data semantica è il frontmatter `aggiornato` (YYYY-MM-DD, già normalizzato da
+// YAML); se assente o malformato si ripiega sulla data del file.
+const DATE_RE = /^\d{4}-\d{2}-\d{2}$/
+
 export async function getStatus(): Promise<WikiStatus> {
   const pages = await getAllPages()
   const byTipo: Record<string, number> = {}
@@ -413,7 +436,9 @@ export async function getStatus(): Promise<WikiStatus> {
     byTipo[t] = (byTipo[t] ?? 0) + 1
     const s = p.frontmatter.stato ?? 'senza-stato'
     byStato[s] = (byStato[s] ?? 0) + 1
-    if (p.updatedAt > lastUpdated) lastUpdated = p.updatedAt
+    const a = p.frontmatter.aggiornato
+    const updated = a && DATE_RE.test(a) ? a : p.updatedAt
+    if (updated > lastUpdated) lastUpdated = updated
   }
   return { totalPages: pages.length, byTipo, byStato, lastUpdated }
 }
