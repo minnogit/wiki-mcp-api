@@ -9,8 +9,7 @@ export const wikiListRawTool = createTool({
     'Confronta i checksum con quelli registrati in wiki/sources.md per individuare in un colpo solo, senza chiamate ripetute a wiki_checksum, ' +
     'quali sorgenti sono nuove o sono cambiate rispetto all\'ultimo ingest (utile sia per INGEST sia per il controllo "pagine stale" del LINT).',
   inputSchema: z.object({}),
-  execute: async () => listRaw(),
-})
+  execute: async () => listRaw(),})
 
 export const wikiReadRawTool = createTool({
   id: 'wiki_read_raw',
@@ -20,7 +19,7 @@ export const wikiReadRawTool = createTool({
   }),
   execute: async ({ filename }) => {
     try {
-      return { content: readRaw(filename) }
+      return { content: await readRaw(filename) }
     } catch (e) {
       return { error: (e as Error).message }
     }

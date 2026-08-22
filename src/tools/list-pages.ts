@@ -9,7 +9,7 @@ export const wikiListPagesTool = createTool({
     categoria: z.string().optional().describe('Sottocartella da filtrare, es. "concetti", "analisi", "procedure"'),
   }),
   execute: async ({ categoria }) => {
-    const pages = getAllPages().map(({ content, links, ...meta }) => meta)
+    const pages = (await getAllPages()).map(({ content, links, ...meta }) => meta)
     if (!categoria) return pages
     return pages.filter(p => p.path.startsWith(categoria + '/'))
   },

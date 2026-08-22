@@ -10,7 +10,7 @@ export const wikiChecksumTool = createTool({
   }),
   execute: async ({ path }) => {
     try {
-      return { checksum: fileChecksum(path), path }
+      return { checksum: await fileChecksum(path), path }
     } catch (e) {
       return { error: (e as Error).message }
     }
