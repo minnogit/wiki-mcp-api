@@ -145,11 +145,16 @@ function scanDir(dir: string, base: string): string[] {
   return files
 }
 
-function parsePage(relPath: string): Page {
-  const full = path.join(WIKI_DIR, relPath)
+// Cache di parsing per singolo file: evita di rileggere/riparsare tutto il corpus a
+// ogni chiamata tool. Validità basata su (mtimeMs, size): scritture via writePage/
+// appendLog ed edit esterni cambiano l'mtime e invalidano da sole; le voci dei file
+// eliminati vengono rimosse in getAllPages. Le Page condivise dalla cache sono da
+// trattare come immutabili (nessun consumer le muta mai in place).
+const pageCache = new Map<string, { key: string; page: Page }>()
+
+function parsePage(relPath: string, full: string, stat: fs.Stats): Page {
   const raw = fs.readFileSync(full, 'utf-8')
   const { data, content } = matter(raw)
-  const stat = fs.statSync(full)
   return {
     path: relPath,
     slug: relPath.replace(/\.md$/, ''),
@@ -167,8 +172,25 @@ function parsePage(relPath: string): Page {
   }
 }
 
+function parsePageCached(relPath: string, full: string): Page {
+  const stat = fs.statSync(full)
+  const key = `${stat.mtimeMs}:${stat.size}`
+  const hit = pageCache.get(full)
+  if (hit && hit.key === key) return hit.page
+  const page = parsePage(relPath, full, stat)
+  pageCache.set(full, { key, page })
+  return page
+}
+
 export function getAllPages(): Page[] {
-  return scanDir(WIKI_DIR, WIKI_DIR).map(parsePage)
+  const seen = new Set<string>()
+  const pages = scanDir(WIKI_DIR, WIKI_DIR).map((rel) => {
+    const full = path.join(WIKI_DIR, rel)
+    seen.add(full)
+    return parsePageCached(rel, full)
+  })
+  for (const key of pageCache.keys()) if (!seen.has(key)) pageCache.delete(key)
+  return pages
 }
 
 export function getPage(slug: string): Page | null {
@@ -176,7 +198,7 @@ export function getPage(slug: string): Page | null {
   const full = path.join(WIKI_DIR, relPath)
   if (!fs.existsSync(full)) return null
   if (!full.startsWith(WIKI_DIR + path.sep)) return null
-  return parsePage(relPath)
+  return parsePageCached(relPath, full)
 }
 
 export function searchPages(opts: SearchOpts): PageMeta[] {
