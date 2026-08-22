@@ -278,7 +278,7 @@ export function listRaw(): RawFileInfo[] {
   return fs
     .readdirSync(RAW_DIR)
     .filter((f) => fs.statSync(path.join(RAW_DIR, f)).isFile())
-    .map((filename) => ({ filename, checksum: fileChecksum(filename) }))
+    .map((filename) => ({ filename, checksum: checksumIn(RAW_DIR, filename) }))
 }
 
 export function readRaw(filename: string): string {
@@ -288,17 +288,24 @@ export function readRaw(filename: string): string {
   return fs.readFileSync(full, 'utf-8')
 }
 
-export function fileChecksum(filePath: string): string {
-  let full = filePath
-  if (!path.isAbsolute(filePath)) {
-    const w = path.join(WIKI_DIR, filePath)
-    const r = path.join(RAW_DIR, filePath)
-    if (fs.existsSync(w)) full = w
-    else if (fs.existsSync(r)) full = r
-    else throw new Error(`File non trovato: ${filePath}`)
-  }
+function checksumIn(dir: string, relPath: string): string {
+  const full = path.resolve(dir, relPath)
+  if (!full.startsWith(dir + path.sep)) throw new Error('Path fuori dalla directory consentita')
+  if (!fs.existsSync(full) || !fs.statSync(full).isFile()) throw new Error(`File non trovato: ${relPath}`)
   const buf = fs.readFileSync(full)
   return crypto.createHash('sha256').update(buf).digest('hex').slice(0, 12)
+}
+
+// Accetta solo path relativi a wiki/ o raw/: in caso di omonimia vince la copia in
+// wiki/ (fonte già ingerita). Niente path assoluti, per coerenza col boundary
+// wiki/ scrivibile / raw/ leggibile.
+export function fileChecksum(relPath: string): string {
+  if (path.isAbsolute(relPath)) throw new Error('Solo path relativi a wiki/ o raw/ sono consentiti')
+  const w = path.resolve(WIKI_DIR, relPath)
+  const r = path.resolve(RAW_DIR, relPath)
+  if (w.startsWith(WIKI_DIR + path.sep) && fs.existsSync(w)) return checksumIn(WIKI_DIR, relPath)
+  if (r.startsWith(RAW_DIR + path.sep) && fs.existsSync(r)) return checksumIn(RAW_DIR, relPath)
+  throw new Error(`File non trovato: ${relPath}`)
 }
 
 export interface Graph {
