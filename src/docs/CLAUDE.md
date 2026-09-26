@@ -28,7 +28,9 @@ e co-evolve questo schema. L'agente **non modifica mai** `raw/`.
 ```
 .
 ├── CLAUDE.md          # questo file (schema operativo)
-├── raw/               # sorgenti immutabili (documentazione e analisi in markdown)
+├── raw/               # sorgenti immutabili (documentazione e analisi in markdown);
+│                      # può avere sottocartelle (es. per anno/tipo) per evitare
+│                      # conflitti tra sorgenti con lo stesso nome
 └── wiki/              # pagine generate e mantenute dall'agente
     ├── index.md       # catalogo navigabile di tutte le pagine
     ├── log.md         # registro cronologico delle operazioni
@@ -47,6 +49,13 @@ Le sottocartelle in `wiki/` sono indicative: aggiungile, rinominale o fondile
 quando emergono nuove categorie, e rimuovi quelle che non si applicano al tuo
 dominio (es. `normativa/` non serve se non c'è alcun aspetto regolamentare).
 Non creare cartelle vuote "per il futuro".
+
+Valuta se aggiungere `raw/` a `.gitignore`: se il dedup/staleness delle fonti
+si basa solo sul checksum (come qui), tenere `raw/` nel repo che versiona la
+wiki è spesso ridondante. In tal caso il checksum in `sources.md` resta
+un'impronta per rilevare modifiche, non un backup del contenuto — se ti serve
+poter recuperare il file grezzo originale (non solo sapere che è cambiato),
+tienilo versionato o backuppalo altrove.
 
 ---
 
@@ -163,6 +172,13 @@ Se l'utente chiede di controllare l'intera cartella `raw/` (es. "ci sono
 sorgenti nuove o cambiate?"), usa `wiki_list_raw` per ottenere in un colpo
 solo filename + checksum attuale di tutti i file, e confrontali con
 `wiki/sources.md` invece di chiamare `wiki_checksum` per ognuno.
+
+`raw/` può contenere sottocartelle (es. `raw/verbali/2026-01.md`): `wiki_list_raw`
+e `wiki_read_raw` le attraversano ricorsivamente, e il filename è sempre il path
+relativo completo a `raw/`. Usa le sottocartelle quando file di sorgenti diverse
+rischierebbero altrimenti di avere lo stesso nome — il path completo (non il solo
+basename) è ciò che identifica la sorgente ovunque venga referenziata (`fonti:`,
+`sources.md`, citazioni in linea).
 
 1. **Calcola il checksum** del file con il tool `wiki_checksum` (primi 12 caratteri dello SHA256).
 2. **Confronta con `wiki/sources.md`**:
@@ -322,8 +338,12 @@ Formato:
 | File | SHA256 (12 car.) | Ultimo ingest | Pagine toccate |
 |------|-----------------|---------------|----------------|
 | raw/foo.md | a3f1b2c4d5e6 | 2026-06-28 | [[entita-1]], [[entita-2]] |
+| raw/verbali/2026-01.md | b7e2a9c1f0d3 | 2026-06-28 | [[entita-3]] |
 ```
 
+- La colonna "File" usa sempre il path completo relativo a `raw/`, sottocartelle
+  incluse: è quello a disambiguare eventuali file con lo stesso basename in
+  cartelle diverse (es. `raw/verbali/2026-01.md` vs `raw/archivio/2026-01.md`).
 - Il checksum è calcolato con `sha256sum` (primi 12 caratteri dell'hash).
 - La colonna "Pagine toccate" elenca tutte le pagine wiki che dipendono da
   quella sorgente, anche se aggiunte in ingest successivi.
