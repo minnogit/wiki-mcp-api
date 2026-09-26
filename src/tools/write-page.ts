@@ -3,7 +3,7 @@ import { z } from 'zod'
 import { writePage } from '../wiki/service.js'
 
 export const wikiWritePageTool = createTool({
-  id: 'wiki_write_page',
+  id: 'wikiWritePage',
   description:
     'Crea o aggiorna una pagina nella wiki. Scrive SOLO in wiki/, mai in raw/. Il path è relativo alla directory wiki, es. "concetti/nuova-pagina.md". ' +
     'Il frontmatter YAML è validato: tipo (uno tra concetto|soggetto|procedura|normativa|entita|analisi), tags (almeno uno), fonti (array, anche vuoto), ' +

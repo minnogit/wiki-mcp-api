@@ -33,35 +33,37 @@ npx tsc --noEmit             # typecheck only (no lint script configured)
 - **`src/server.ts`** — instantiates two `MCPServer` instances from the same tool implementations:
   - `server` — full tool set (read + write), used by stdio.
   - `remoteServer` — the read-only subset only (`readOnlyTools`), used by HTTP. When adding a new tool, decide explicitly whether it belongs in `readOnlyTools` (safe to expose remotely) or is write-capable (stdio-only, alongside `wikiWritePage`/`wikiAppendLog`).
-  - Also owns the `instructions` string the MCP client sees (summarizes the INGEST / QUERY / LINT workflows and the read/write boundary between `wiki/` and `raw/`); the HTTP variant appends a note that write tools are unavailable.
+  - Also owns the `instructions` string the MCP client sees (summarizes the INGEST / QUERY / LINT workflows and the read/write boundary between `wiki/` and `raw/`); the HTTP variant appends a note that write tools are unavailable. The opening domain line comes from `WIKI_DOMAIN` — keep it configurable, never hardcode a specific wiki's domain here.
+  - The exposed MCP tool name is the **key** in the `tools` object, not the tool's own `id` field. Keep the two identical (both camelCase) when adding a tool: they diverged once, and every doc plus the `instructions` string ended up advertising snake_case names that no client could call.
 - **`src/tools/*.ts`** — one file per MCP tool. Each is a thin `createTool({ id, description, inputSchema (zod), execute })` wrapper with no logic of its own; all real behavior belongs in `src/wiki/service.ts`. Keep this separation when adding tools — don't inline filesystem logic into a tool file.
 - **`src/wiki/service.ts`** — all filesystem access:
   - Reads `WIKI_PATH` / `RAW_PATH` env vars at module load (`resolveDir`), defaulting to `./wiki` and `./raw` relative to cwd, resolved to absolute paths.
   - Pages are `.md` files under the wiki dir, parsed with `gray-matter` for YAML frontmatter (`tipo`, `tags`, `fonti`, `aggiornato`, `stato`). Title is extracted from the first `# H1` line, falling back to the filename.
-  - Wikilinks (`[[slug]]` / `[[slug|label]]`) are extracted from page content via regex for `wiki_graph`.
+  - Wikilinks (`[[slug]]` / `[[slug|label]]`) are extracted from page content via regex for `wikiGraph`.
   - Writes (`writePage`, `appendLog`) take an inter-process lock via `proper-lockfile` on the target file before writing, to avoid corrupting concurrent writes.
   - `getPage` and `writePage` guard against path traversal by resolving the full path and checking it still starts within the wiki dir; `readRaw` rejects filenames containing `/` or `..`. Preserve these checks in any change — they are the only thing enforcing "agent may write only to `wiki/`, never to `raw/`".
   - Dates derived from file mtime are formatted using `WIKI_TZ` (e.g. `Europe/Rome`) if set, otherwise the host machine's local timezone — relevant when the server runs in a different timezone than its users.
-  - `wiki_checksum` computes SHA256 (first 12 hex chars) and checks both wiki and raw dirs when given a relative path.
+  - `wikiChecksum` computes SHA256 (first 12 hex chars) and checks both wiki and raw dirs when given a relative path.
 - **`tests/*.test.ts`** — vitest suite covering write/lock behavior, raw read-only access, graph/status derivation, and search. Point `WIKI_PATH`/`RAW_PATH` at fixture dirs when adding tests rather than mutating the repo's local `wiki/`/`raw/`.
 
 ### Tool surface (all defined in `src/tools/`, registered in `src/server.ts`)
 
 | Tool | Backing function | Transport | Notes |
 | --- | --- | --- | --- |
-| `wiki_search` | `searchPages` | stdio + HTTP | filters by `q`/`tag`/`tipo`/`stato`, returns metadata only (no content/links) |
-| `wiki_read_page` | `getPage` | stdio + HTTP | full page incl. frontmatter + content, by slug |
-| `wiki_list_pages` | `searchPages` + client-side filter | stdio + HTTP | optional `categoria` = subfolder prefix |
-| `wiki_write_page` | `writePage` | stdio only | wiki/ only, `.md` only |
-| `wiki_append_log` | `appendLog` | stdio only | appends to `wiki/log.md` |
-| `wiki_list_raw` / `wiki_read_raw` | `listRaw` / `readRaw` | stdio + HTTP | read-only access to `raw/` |
-| `wiki_checksum` | `fileChecksum` | stdio + HTTP | dedup check for the ingest workflow |
-| `wiki_graph` | `getGraph` | stdio + HTTP | slug -> list of linked slugs |
-| `wiki_status` | `getStatus` | stdio + HTTP | page counts by `tipo`/`stato`, last-updated date |
+| `wikiSearch` | `searchPages` | stdio + HTTP | filters by `q`/`tag`/`tipo`/`stato`, returns metadata only (no content/links) |
+| `wikiReadPage` | `getPage` | stdio + HTTP | full page incl. frontmatter + content, by slug |
+| `wikiListPages` | `searchPages` + client-side filter | stdio + HTTP | optional `categoria` = subfolder prefix |
+| `wikiWritePage` | `writePage` | stdio only | wiki/ only, `.md` only |
+| `wikiAppendLog` | `appendLog` | stdio only | appends to `wiki/log.md` |
+| `wikiListRaw` / `wikiReadRaw` | `listRaw` / `readRaw` | stdio + HTTP | read-only access to `raw/` |
+| `wikiChecksum` | `fileChecksum` | stdio + HTTP | dedup check for the ingest workflow |
+| `wikiGraph` | `getGraph` | stdio + HTTP | slug -> list of linked slugs |
+| `wikiStatus` | `getStatus` | stdio + HTTP | page counts by `tipo`/`stato`, last-updated date |
 
 ## Environment variables
 
 - `WIKI_PATH` / `RAW_PATH` — required in practice; default to `./wiki` / `./raw` relative to cwd if unset.
+- `WIKI_DOMAIN` — one line stating which domain the connected wiki documents; injected at the top of the `instructions` string the MCP client receives. Set it per instance: one built binary can back several wikis at once (each MCP client entry passes its own `WIKI_PATH`/`RAW_PATH`), so a hardcoded domain line would describe the wrong wiki for all but one of them. Falls back to a neutral sentence pointing at the connected wiki's own `CLAUDE.md`.
 - `WIKI_TZ` — optional IANA timezone (e.g. `Europe/Rome`) used to format mtime-derived dates consistently regardless of the host machine's local timezone.
 - `MCP_HTTP_PORT` — HTTP transport port, default `3000`.
 - `MCP_HTTP_TOKEN` — required for `src/http.ts`; process refuses to start without it.
@@ -70,4 +72,4 @@ npx tsc --noEmit             # typecheck only (no lint script configured)
 
 `WIKI_PATH`/`RAW_PATH` in the local `.env` point outside this repo (currently a sibling `llm_wiki/` project). The `wiki/` and `raw/` directories inside this repo are gitignored local fixtures for manual testing only — do not treat their contents as representative of real usage.
 
-The actual content schema/workflow for the target wiki (an Italian traffic-code "verbalizzazione" domain knowledge base — page naming, frontmatter shape, INGEST/QUERY/LINT agent workflows) is documented in `src/docs/CLAUDE.md` in this repo. That file is currently untracked and describes conventions for agents operating on the *wiki content*, not on this server's code — it's effectively the `CLAUDE.md`/`AGENTS.md` meant to live inside the external wiki project directory, not inside `wiki-mcp-api/src/`. Don't confuse its instructions (Italian-language wiki page conventions) with instructions for working on this codebase.
+`src/docs/CLAUDE.md` in this repo is the **template** for that external file: a domain-agnostic starting point (page naming, frontmatter shape, INGEST/QUERY/LINT agent workflows) meant to be copied next to a wiki's `wiki/` directory and filled in per domain. It describes conventions for agents operating on the *wiki content*, not on this server's code — it's effectively the `CLAUDE.md`/`AGENTS.md` meant to live inside the external wiki project directory, not inside `wiki-mcp-api/src/`. Don't confuse its instructions (Italian-language wiki page conventions) with instructions for working on this codebase.

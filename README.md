@@ -4,20 +4,20 @@ Server MCP (Model Context Protocol) che espone la wiki di dominio LLM Wiki agli 
 
 ## Descrizione
 
-Il progetto documenta il dominio del software PLService per la verbalizzazione del Codice della Strada italiano ed espone i seguenti tool MCP:
+Il server è domain-agnostic: il contenuto della wiki e il dominio che documenta vivono in una directory esterna indicata da `WIKI_PATH`/`RAW_PATH`, non in questo repo. Espone i seguenti tool MCP:
 
 | Tool | Uso |
 | --- | --- |
-| `wiki_search` | Ricerca full-text nella wiki |
-| `wiki_read_page` | Legge una pagina della wiki |
-| `wiki_list_pages` | Elenca le pagine disponibili |
-| `wiki_write_page` | Scrive una pagina (solo in `wiki/`) |
-| `wiki_append_log` | Aggiunge una riga di log all'ingest |
-| `wiki_list_raw` | Elenca i file sorgente grezzi (`raw/`) |
-| `wiki_read_raw` | Legge un file sorgente grezzo (read-only) |
-| `wiki_checksum` | Calcola il checksum di un file |
-| `wiki_graph` | Restituisce il grafo dei collegamenti tra pagine |
-| `wiki_status` | Stato generale della wiki |
+| `wikiSearch` | Ricerca full-text nella wiki |
+| `wikiReadPage` | Legge una pagina della wiki |
+| `wikiListPages` | Elenca le pagine disponibili |
+| `wikiWritePage` | Scrive una pagina (solo in `wiki/`) |
+| `wikiAppendLog` | Aggiunge una riga di log all'ingest |
+| `wikiListRaw` | Elenca i file sorgente grezzi (`raw/`) |
+| `wikiReadRaw` | Legge un file sorgente grezzo (read-only) |
+| `wikiChecksum` | Calcola il checksum di un file |
+| `wikiGraph` | Restituisce il grafo dei collegamenti tra pagine |
+| `wikiStatus` | Stato generale della wiki |
 
 ## Setup del progetto
 
@@ -30,6 +30,7 @@ Configura in `.env`:
 
 - `WIKI_PATH` — cartella contenente le pagine della wiki (scrivibile)
 - `RAW_PATH` — cartella contenente i sorgenti grezzi da cui fare ingest (read-only)
+- `WIKI_DOMAIN` — una riga che descrive il dominio documentato dalla wiki collegata, inclusa nelle `instructions` inviate al client MCP. Impostala per ogni istanza: senza, il client riceve solo una descrizione generica.
 
 ## Build
 
@@ -57,6 +58,7 @@ Il server comunica via **stdio**, quindi va lanciato come processo locale (`node
 claude mcp add --transport stdio wiki-mcp-api \
   -e WIKI_PATH=/percorso/assoluto/wiki \
   -e RAW_PATH=/percorso/assoluto/raw \
+  -e WIKI_DOMAIN="Questa wiki documenta il dominio di <...>." \
   -- node /percorso/assoluto/wiki-mcp-api/dist/stdio.js
 ```
 
@@ -71,7 +73,8 @@ claude mcp add --transport stdio wiki-mcp-api \
       "args": ["/percorso/assoluto/wiki-mcp-api/dist/stdio.js"],
       "env": {
         "WIKI_PATH": "/percorso/assoluto/wiki",
-        "RAW_PATH": "/percorso/assoluto/raw"
+        "RAW_PATH": "/percorso/assoluto/raw",
+        "WIKI_DOMAIN": "Questa wiki documenta il dominio di <...>."
       }
     }
   }
@@ -92,7 +95,8 @@ Aggiungi il server in `opencode.json` (globale in `~/.config/opencode/opencode.j
       "enabled": true,
       "environment": {
         "WIKI_PATH": "/percorso/assoluto/wiki",
-        "RAW_PATH": "/percorso/assoluto/raw"
+        "RAW_PATH": "/percorso/assoluto/raw",
+        "WIKI_DOMAIN": "Questa wiki documenta il dominio di <...>."
       }
     }
   }
@@ -101,7 +105,7 @@ Aggiungi il server in `opencode.json` (globale in `~/.config/opencode/opencode.j
 
 ## Accesso remoto (sola lettura)
 
-Oltre allo stdio locale, il progetto espone un secondo entrypoint (`src/http.ts`) pensato per l'accesso da remoto: monta solo i tool di sola lettura (`wiki_search`, `wiki_read_page`, `wiki_list_pages`, `wiki_list_raw`, `wiki_read_raw`, `wiki_checksum`, `wiki_graph`, `wiki_status`). `wiki_write_page` e `wiki_append_log` restano disponibili **solo** via stdio locale: chi accede da remoto non può scrivere sulla wiki.
+Oltre allo stdio locale, il progetto espone un secondo entrypoint (`src/http.ts`) pensato per l'accesso da remoto: monta solo i tool di sola lettura (`wikiSearch`, `wikiReadPage`, `wikiListPages`, `wikiListRaw`, `wikiReadRaw`, `wikiChecksum`, `wikiGraph`, `wikiStatus`). `wikiWritePage` e `wikiAppendLog` restano disponibili **solo** via stdio locale: chi accede da remoto non può scrivere sulla wiki.
 
 Configura in `.env`:
 

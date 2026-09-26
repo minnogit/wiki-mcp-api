@@ -31,18 +31,28 @@ const readOnlyTools = {
   wikiStatus: wikiStatusTool,
 }
 
+// Il server è domain-agnostic: la riga che descrive *quale* dominio documenta la
+// wiki collegata arriva da WIKI_DOMAIN, insieme a WIKI_PATH/RAW_PATH. Senza di
+// essa il client riceverebbe la descrizione del dominio sbagliato non appena si
+// configura una seconda istanza sullo stesso binario.
+const domainLine =
+  process.env.WIKI_DOMAIN?.trim() ||
+  'Questa wiki documenta un dominio di conoscenza mantenuto come pagine markdown. Il dominio specifico è descritto nel CLAUDE.md della wiki collegata (accanto a wiki/).'
+
+// I nomi qui devono combaciare con le CHIAVI dell'oggetto `tools` sotto (camelCase):
+// è la chiave, non il campo `id` del tool, a diventare il nome esposto via MCP.
 const instructions = `
-Questa wiki documenta il dominio del software PLService per la verbalizzazione del Codice della Strada italiano.
+${domainLine}
 
 Workflow principali:
-- INGEST: usa wiki_list_raw, wiki_read_raw, wiki_checksum, wiki_write_page, wiki_append_log
-- QUERY: leggi prima wiki_read_page("index") per individuare le pagine candidate, poi usa wiki_search, wiki_read_page, wiki_list_pages
-- LINT: usa wiki_list_pages, wiki_graph, wiki_status
+- INGEST: usa wikiListRaw, wikiReadRaw, wikiChecksum, wikiWritePage, wikiAppendLog
+- QUERY: leggi prima wikiReadPage("index") per individuare le pagine candidate, poi usa wikiSearch, wikiReadPage, wikiListPages
+- LINT: usa wikiListPages, wikiGraph, wikiStatus
 
 Regole:
-- wiki_write_page scrive SOLO in wiki/, mai in raw/
-- wiki_write_page valida il frontmatter (tipo/tags/fonti/aggiornato/stato); index.md, log.md, sources.md e overview.md ne sono esenti
-- wiki_read_raw è read-only
+- wikiWritePage scrive SOLO in wiki/, mai in raw/
+- wikiWritePage valida il frontmatter (tipo/tags/fonti/aggiornato/stato); index.md, log.md, sources.md e overview.md ne sono esenti
+- wikiReadRaw è read-only
 - I path delle pagine sono relativi alla wiki dir (es. "concetti/verbale.md")
 `.trim()
 
@@ -51,7 +61,7 @@ export const server = new MCPServer({
   id: 'wiki-mcp',
   name: 'LLM Wiki MCP Server',
   version: '0.1.0',
-  description: 'Ponte MCP tra agenti AI e la wiki di dominio (verbalizzazione Codice della Strada)',
+  description: 'Ponte MCP tra agenti AI e una wiki di dominio in markdown',
   instructions,
   tools: {
     ...readOnlyTools,
@@ -66,7 +76,7 @@ export const remoteServer = new MCPServer({
   id: 'wiki-mcp-readonly',
   name: 'LLM Wiki MCP Server (read-only)',
   version: '0.1.0',
-  description: 'Ponte MCP di sola lettura verso la wiki di dominio (verbalizzazione Codice della Strada)',
-  instructions: `${instructions}\n\nQuesta istanza è di sola lettura: wiki_write_page e wiki_append_log non sono disponibili qui.`,
+  description: 'Ponte MCP di sola lettura verso una wiki di dominio in markdown',
+  instructions: `${instructions}\n\nQuesta istanza è di sola lettura: wikiWritePage e wikiAppendLog non sono disponibili qui.`,
   tools: readOnlyTools,
 })

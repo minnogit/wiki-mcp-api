@@ -95,7 +95,7 @@ non si applica, aggiungi altri valori se il dominio ha categorie proprie che
 gli enum sopra non colgono (basta restare coerenti nel tempo).
 
 **Tag**: prima di inventare un tag nuovo, controlla se esiste già uno
-equivalente (`wiki_search` senza `q`, o scorri `tags:` di pagine simili) e
+equivalente (`wikiSearch` senza `q`, o scorri `tags:` di pagine simili) e
 riusalo — anche se il nome che avresti scelto tu è leggermente diverso
 (plurale/singolare, sinonimo). Preferisci il **singolare** per i tag
 concettuali, salvo quando il plurale identifica un'entità di codice con quel
@@ -128,7 +128,7 @@ Se un argomento contiene sotto-concetti con natura o stato diversi (es. un
 aspetto "stabile" e uno ancora "da-rivedere", o un concetto di dominio insieme
 al suo modello software), valuta lo split in più pagine linkate invece di
 un frontmatter unico che li appiattisce. Frontmatter e contenuto coerenti
-rendono `wiki_search` (filtri per tag/tipo/stato + ranking sul contenuto)
+rendono `wikiSearch` (filtri per tag/tipo/stato + ranking sul contenuto)
 affidabile; una pagina che mescola temi diversi diluisce entrambi.
 
 **Struttura della pagina** (flessibile, adattala al tipo):
@@ -181,20 +181,20 @@ ed espandi man mano che emergono.
 
 Trigger: l'utente dice "ingerisci [file]" o segnala un nuovo file in `raw/`.
 Se l'utente chiede di controllare l'intera cartella `raw/` (es. "ci sono
-sorgenti nuove o cambiate?"), usa `wiki_list_raw` per ottenere in un colpo
+sorgenti nuove o cambiate?"), usa `wikiListRaw` per ottenere in un colpo
 solo filename + checksum attuale di tutti i file, e confrontali con
-`wiki/sources.md` invece di chiamare `wiki_checksum` per ognuno.
+`wiki/sources.md` invece di chiamare `wikiChecksum` per ognuno.
 
-`raw/` può contenere sottocartelle (es. `raw/verbali/2026-01.md`): `wiki_list_raw`
-e `wiki_read_raw` le attraversano ricorsivamente, e il filename è sempre il path
+`raw/` può contenere sottocartelle (es. `raw/verbali/2026-01.md`): `wikiListRaw`
+e `wikiReadRaw` le attraversano ricorsivamente, e il filename è sempre il path
 relativo completo a `raw/`. Usa le sottocartelle quando file di sorgenti diverse
 rischierebbero altrimenti di avere lo stesso nome — il path completo (non il solo
 basename) è ciò che identifica la sorgente ovunque venga referenziata (`fonti:`,
 `sources.md`, citazioni in linea).
 
-1. **Calcola il checksum** del file con il tool `wiki_checksum` (primi 12 caratteri dello SHA256).
+1. **Calcola il checksum** del file con il tool `wikiChecksum` (primi 12 caratteri dello SHA256).
 2. **Confronta il checksum con tutte le righe di `wiki/sources.md`** (il matching
-   è per **checksum**, non per path/nome file — `wiki_list_raw` attraversa `raw/`
+   è per **checksum**, non per path/nome file — `wikiListRaw` attraversa `raw/`
    ricorsivamente, e i file possono essere spostati o rinominati in sottocartelle
    diverse mantenendo lo stesso contenuto):
    - Nessuna riga con quel checksum → contenuto nuovo, primo ingest, procedi.
@@ -221,20 +221,20 @@ basename) è ciò che identifica la sorgente ovunque venga referenziata (`fonti:
    dove il delta reale è spesso una minima parte del file. Se `raw/` non è
    (più) tracciato per quel file, procedi con la lettura integrale del
    passo 4.
-4. **Leggi** la sorgente completa con `wiki_read_raw` (o, se hai isolato il
+4. **Leggi** la sorgente completa con `wikiReadRaw` (o, se hai isolato il
    delta al passo 3, la sola porzione cambiata con abbastanza contesto per
    capirla).
 5. **Discuti** con l'utente i punti chiave (3-7 punti), per allineamento.
 6. **Decidi** quali pagine creare e quali aggiornare. Privilegia
    l'aggiornamento di pagine esistenti rispetto alla creazione di duplicati.
-7. **Crea/aggiorna le pagine** con `wiki_write_page`:
+7. **Crea/aggiorna le pagine** con `wikiWritePage`:
    - Per ogni concetto/soggetto/procedura/entità nuova → pagina dedicata.
    - Per ogni pagina esistente impattata → integra le nuove informazioni,
      segnalando contraddizioni con `> ⚠ Contraddizione: ...` in linea.
    - Aggiorna cross-reference in entrambe le direzioni.
-8. **Aggiorna `wiki/sources.md`** (con `wiki_write_page`) con il checksum e le pagine toccate.
-9. **Aggiorna `index.md`** (con `wiki_write_page`) con le nuove pagine e i nuovi link.
-10. **Appendi a `log.md`** con `wiki_append_log` una voce:
+8. **Aggiorna `wiki/sources.md`** (con `wikiWritePage`) con il checksum e le pagine toccate.
+9. **Aggiorna `index.md`** (con `wikiWritePage`) con le nuove pagine e i nuovi link.
+10. **Appendi a `log.md`** con `wikiAppendLog` una voce:
 
     ```
     ## [YYYY-MM-DD] ingest | nome-file-sorgente
@@ -255,21 +255,21 @@ e chiedi conferma** sullo scope.
 
 Trigger: l'utente fa una domanda di dominio.
 
-1. **Leggi `index.md`** (con `wiki_read_page`) per un quadro d'insieme, poi usa
-   `wiki_search` (per `q`/`tag`/`tipo`/`stato`) o `wiki_list_pages` (per
+1. **Leggi `index.md`** (con `wikiReadPage`) per un quadro d'insieme, poi usa
+   `wikiSearch` (per `q`/`tag`/`tipo`/`stato`) o `wikiListPages` (per
    categoria) per individuare le pagine candidate senza affidarti solo
    all'indice manuale, che può essere disallineato.
-2. **Leggi le pagine rilevanti** con `wiki_read_page` (di solito 3-8). Usa lo
-   `snippet` restituito da `wiki_search` per scartare i candidati poco
+2. **Leggi le pagine rilevanti** con `wikiReadPage` (di solito 3-8). Usa lo
+   `snippet` restituito da `wikiSearch` per scartare i candidati poco
    pertinenti prima di leggerli per intero.
 3. **Sintetizza la risposta** con citazioni esplicite alle pagine wiki e,
-   dove rilevante, alle sorgenti `raw/` (consultabili con `wiki_read_raw`).
+   dove rilevante, alle sorgenti `raw/` (consultabili con `wikiReadRaw`).
 4. **Proponi all'utente** se la risposta merita di essere filata:
    - come nuova pagina in `analisi/`,
    - come sezione aggiuntiva di una pagina esistente,
    - oppure di non filare nulla.
-5. Se l'utente accetta, fila la risposta (`wiki_write_page`) e appendi a
-   `log.md` con `wiki_append_log`:
+5. Se l'utente accetta, fila la risposta (`wikiWritePage`) e appendi a
+   `log.md` con `wikiAppendLog`:
 
    ```
    ## [YYYY-MM-DD] query | breve titolo della domanda
@@ -283,14 +283,14 @@ Trigger: l'utente fa una domanda di dominio.
 
 Trigger: l'utente dice "lint" o "controlla la wiki".
 
-Usa `wiki_list_pages` per ottenere tutte le pagine con frontmatter, `wiki_graph`
-per la mappa dei wikilink, e `wiki_status` per i conteggi per `tipo`/`stato` e
+Usa `wikiListPages` per ottenere tutte le pagine con frontmatter, `wikiGraph`
+per la mappa dei wikilink, e `wikiStatus` per i conteggi per `tipo`/`stato` e
 la data di ultimo aggiornamento. Controlla:
 
 1. **Contraddizioni** tra pagine.
 2. **Pagine stale**: due segnali distinti, entrambi da controllare:
-   - `stato: da-rivedere` in `wiki_list_pages`/`wiki_status` (segnale esplicito).
-   - Confronta l'insieme dei checksum attuali di tutto `raw/` (via `wiki_list_raw`,
+   - `stato: da-rivedere` in `wikiListPages`/`wikiStatus` (segnale esplicito).
+   - Confronta l'insieme dei checksum attuali di tutto `raw/` (via `wikiListRaw`,
      un'unica chiamata) con l'insieme dei checksum registrati in `wiki/sources.md`
      — il confronto è per **checksum**, non per path: un file spostato/rinominato
      ha lo stesso checksum e non va segnalato come "sorgente sparita" + "sorgente
@@ -299,20 +299,20 @@ la data di ultimo aggiornamento. Controlla:
      registrato per lo stesso contenuto indica una sorgente aggiornata dopo
      l'ultimo ingest: per ogni pagina i cui `fonti` puntano a quella riga, se il
      suo `aggiornato` precede la modifica, la pagina è probabilmente stale.
-3. **Orfani**: leggi direttamente il campo `orphans` di `wiki_graph` (già
+3. **Orfani**: leggi direttamente il campo `orphans` di `wikiGraph` (già
    esclude `index.md`, `log.md`, `sources.md`, `overview.md`).
 4. **Concetti senza pagina**: termini ricorrenti in più pagine ma privi di
    pagina propria.
 5. **Cross-reference mancanti**: coppie A/B che dovrebbero linkarsi (verifica
-   con il campo `reverse` di `wiki_graph`).
-6. **Frontmatter inconsistente**: tag, tipi, date — confronta con `wiki_list_pages`.
+   con il campo `reverse` di `wikiGraph`).
+6. **Frontmatter inconsistente**: tag, tipi, date — confronta con `wikiListPages`.
    Per i tag, oltre a valori palesemente sbagliati, controlla la
    distribuzione: pochi tag usati su molte pagine e una lunga coda di tag
    usati una sola volta è normale, ma cerca specificamente **coppie
    quasi-duplicate** (singolare/plurale, sinonimi) che spezzano un cluster
    reale in due — vedi §2 sopra.
-7. **Link rotti**: nel campo `reverse` di `wiki_graph`, uno slug presente come
-   chiave ma assente tra le pagine reali (`wiki_list_pages`) è un wikilink che
+7. **Link rotti**: nel campo `reverse` di `wikiGraph`, uno slug presente come
+   chiave ma assente tra le pagine reali (`wikiListPages`) è un wikilink che
    punta a una pagina non ancora creata.
 8. **Lacune di copertura**: aree del dominio sotto-documentate.
 
