@@ -3,7 +3,7 @@ import { z } from 'zod'
 import { getGraph } from '../wiki/service.js'
 
 export const wikiGraphTool = createTool({
-  id: 'wiki_graph',
+  id: 'wikiGraph',
   description:
     'Restituisce il grafo dei wikilink [[...]] tra le pagine: { forward, reverse, orphans }. ' +
     'forward: slug -> slug delle pagine collegate (link in uscita). reverse: slug -> slug delle pagine che la collegano (link in entrata; ' +

@@ -3,11 +3,11 @@ import { z } from 'zod'
 import { searchPages } from '../wiki/service.js'
 
 export const wikiSearchTool = createTool({
-  id: 'wiki_search',
+  id: 'wikiSearch',
   description:
     'Cerca pagine nella wiki per testo libero, tag, tipo o stato. Il testo libero usa ranking per rilevanza (peso su titolo > tag > contenuto, con IDF), non semplice substring match. ' +
     'Restituisce metadati senza il contenuto completo, ordinati per score decrescente quando `q` è presente. Quando `q` produce risultati, ogni voce include anche `snippet`: ' +
-    'un estratto di contesto (~120 caratteri) intorno alla prima occorrenza del termine cercato, utile per valutare la pertinenza senza dover leggere la pagina intera con wiki_read_page. ' +
+    'un estratto di contesto (~120 caratteri) intorno alla prima occorrenza del termine cercato, utile per valutare la pertinenza senza dover leggere la pagina intera con wikiReadPage. ' +
     'I risultati sono limitati a `topK` voci (default 10 con `q`, poiché già ordinati per rilevanza; default 50 senza `q`, poiché un filtro puro per tag/tipo/stato non ha ranking e un taglio basso sarebbe arbitrario) per evitare output troppo grandi. ' +
     '**Uso via ToolSearch:** Dopo aver caricato con `ToolSearch`, invoca direttamente questo tool dal tool name completo (es. `mcp__wiki-mcp-api__wikiSearch`) — diventa immediatamente disponibile.',
   inputSchema: z.object({
