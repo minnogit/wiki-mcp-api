@@ -1,7 +1,7 @@
-import * as fs from 'fs'
-import * as fsp from 'fs/promises'
-import * as path from 'path'
-import * as crypto from 'crypto'
+import * as fs from 'node:fs'
+import * as fsp from 'node:fs/promises'
+import * as path from 'node:path'
+import * as crypto from 'node:crypto'
 import matter from 'gray-matter'
 import lockfile from 'proper-lockfile'
 import { z } from 'zod'
@@ -121,7 +121,7 @@ const SNIPPET_CONTEXT_CHARS = 60
 
 function buildSnippet(content: string, terms: string[]): string | undefined {
   if (terms.length === 0) return undefined
-  const escaped = terms.map((t) => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+  const escaped = terms.map((t) => t.replace(/[.*+?^${}()|[\]\\]/g, String.raw`\$&`))
   const match = new RegExp(`(${escaped.join('|')})`, 'i').exec(content)
   if (!match) return undefined
 
@@ -132,7 +132,7 @@ function buildSnippet(content: string, terms: string[]): string | undefined {
 }
 
 function extractTitle(content: string, filePath: string): string {
-  const match = content.match(/^#\s+(.+)$/m)
+  const match = /^#\s+(.+)$/m.exec(content)
   return match ? match[1].trim() : path.basename(filePath, '.md')
 }
 
@@ -212,7 +212,7 @@ async function parsePageCached(relPath: string, full: string): Promise<Page> {
   const stat = await fsp.stat(full)
   const key = `${stat.mtimeMs}:${stat.size}`
   const hit = pageCache.get(full)
-  if (hit && hit.key === key) return hit.page
+  if (hit?.key === key) return hit.page
   const page = await parsePage(relPath, full, stat)
   pageCache.set(full, { key, page })
   return page
