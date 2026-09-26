@@ -11,6 +11,15 @@ import { wikiStatusTool } from './tools/status.js'
 
 // Tool di sola lettura: sono gli unici esposti al server HTTP remoto (src/http.ts).
 // I tool di scrittura (wikiWritePage, wikiAppendLog) restano disponibili solo via stdio locale.
+// Questa è una scelta di design deliberata, non solo lo stato attuale: la scrittura via
+// stdio presuppone un clone locale della wiki, che dà gratis due garanzie che il codice
+// non fornisce altrimenti — attribuzione (il commit è di chi esegue l'agente, con la sua
+// identità git) e un checkpoint umano (il diff viene rivisto prima del commit). Un client
+// HTTP/remoto non ha né l'uno né l'altro: il lock su singolo file (proper-lockfile) evita
+// solo la corruzione concorrente, non risolve conflitti tra scritture di utenti diversi, e
+// nessun tool esegue mai commit. Se in futuro si vuole abilitare scrittura remota, queste
+// garanzie vanno reintrodotte esplicitamente (auth per-utente, attribuzione, strategia di
+// commit/review) prima di spostare un tool di scrittura in readOnlyTools o in remoteServer.
 const readOnlyTools = {
   wikiSearch: wikiSearchTool,
   wikiReadPage: wikiReadPageTool,

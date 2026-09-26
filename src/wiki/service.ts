@@ -144,7 +144,7 @@ function extractWikilinks(content: string): string[] {
   return [...new Set(links)]
 }
 
-async function scanDir(dir: string, base: string): Promise<string[]> {
+async function scanDir(dir: string, base: string, filter: (name: string) => boolean = () => true): Promise<string[]> {
   let entries: fs.Dirent[]
   try {
     entries = await fsp.readdir(dir, { withFileTypes: true })
@@ -156,8 +156,8 @@ async function scanDir(dir: string, base: string): Promise<string[]> {
   for (const entry of entries) {
     if (entry.name.startsWith('.')) continue
     const full = path.join(dir, entry.name)
-    if (entry.isDirectory()) files.push(...(await scanDir(full, base)))
-    else if (entry.isFile() && entry.name.endsWith('.md')) files.push(path.relative(base, full))
+    if (entry.isDirectory()) files.push(...(await scanDir(full, base, filter)))
+    else if (entry.isFile() && filter(entry.name)) files.push(path.relative(base, full))
   }
   return files
 }
@@ -221,7 +221,7 @@ async function parsePageCached(relPath: string, full: string): Promise<Page> {
 export async function getAllPages(): Promise<Page[]> {
   const seen = new Set<string>()
   const pages = await Promise.all(
-    (await scanDir(WIKI_DIR, WIKI_DIR)).map(async (rel) => {
+    (await scanDir(WIKI_DIR, WIKI_DIR, (name) => name.endsWith('.md'))).map(async (rel) => {
       const full = path.join(WIKI_DIR, rel)
       seen.add(full)
       return parsePageCached(rel, full)
@@ -337,26 +337,17 @@ export interface RawFileInfo {
   checksum: string
 }
 
+// Ricorsivo: i filename restituiti sono path relativi a RAW_DIR (es. "verbali/2026-01.md"),
+// così due file con lo stesso basename in sottocartelle diverse restano distinguibili sia
+// qui sia in wiki/sources.md (che li registra come "raw/<path completo>").
 export async function listRaw(): Promise<RawFileInfo[]> {
-  let names: string[]
-  try {
-    names = await fsp.readdir(RAW_DIR)
-  } catch (e) {
-    if (isEnoent(e)) return []
-    throw e
-  }
-  const infos = await Promise.all(
-    names.map(async (filename) => {
-      if (!(await fsp.stat(path.join(RAW_DIR, filename))).isFile()) return null
-      return { filename, checksum: await checksumIn(RAW_DIR, filename) }
-    }),
-  )
-  return infos.filter((x): x is RawFileInfo => x !== null)
+  const relPaths = await scanDir(RAW_DIR, RAW_DIR)
+  return Promise.all(relPaths.map(async (filename) => ({ filename, checksum: await checksumIn(RAW_DIR, filename) })))
 }
 
 export async function readRaw(filename: string): Promise<string> {
-  if (filename.includes('/') || filename.includes('..')) throw new Error('Filename non valido')
-  const full = path.join(RAW_DIR, filename)
+  const full = path.resolve(RAW_DIR, filename)
+  if (path.isAbsolute(filename) || !full.startsWith(RAW_DIR + path.sep)) throw new Error('Filename non valido')
   try {
     return await fsp.readFile(full, 'utf-8')
   } catch (e) {

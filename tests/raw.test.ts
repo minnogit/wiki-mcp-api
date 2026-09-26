@@ -25,11 +25,33 @@ describe('readRaw / listRaw', () => {
     expect(list).toEqual([{ filename: 'sorgente.txt', checksum: sha12('dati grezzi') }])
   })
 
-  it('rifiuta traversal e filename mancanti', async () => {
+  it('rifiuta traversal e path assoluti, ma non file mancanti', async () => {
     const { svc } = await init()
     await expect(svc.readRaw('../fuori.txt')).rejects.toThrow('non valido')
-    await expect(svc.readRaw('sub/in.txt')).rejects.toThrow('non valido')
+    await expect(svc.readRaw('/etc/passwd')).rejects.toThrow('non valido')
     await expect(svc.readRaw('assente.txt')).rejects.toThrow('File raw non trovato')
+    await expect(svc.readRaw('sub/assente.txt')).rejects.toThrow('File raw non trovato')
+  })
+
+  it('legge e lista file in sottocartelle, distinguendo omonimi per path', async () => {
+    const { svc } = await init(
+      {},
+      {
+        'verbali/2026-01.md': 'gennaio',
+        'archivio/verbali/2026-01.md': 'gennaio archiviato',
+      },
+    )
+    expect(await svc.readRaw('verbali/2026-01.md')).toBe('gennaio')
+    expect(await svc.readRaw('archivio/verbali/2026-01.md')).toBe('gennaio archiviato')
+
+    const list = await svc.listRaw()
+    expect(list).toEqual(
+      expect.arrayContaining([
+        { filename: 'verbali/2026-01.md', checksum: sha12('gennaio') },
+        { filename: 'archivio/verbali/2026-01.md', checksum: sha12('gennaio archiviato') },
+      ]),
+    )
+    expect(list).toHaveLength(2)
   })
 
   it('raw/ assente equivale a lista vuota', async () => {

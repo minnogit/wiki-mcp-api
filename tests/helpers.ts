@@ -25,7 +25,9 @@ export async function setupService(files: Record<string, string> = {}, rawFiles:
     fs.writeFileSync(full, content)
   }
   for (const [name, content] of Object.entries(rawFiles)) {
-    fs.writeFileSync(path.join(rawDir, name), content)
+    const full = path.join(rawDir, name)
+    fs.mkdirSync(path.dirname(full), { recursive: true })
+    fs.writeFileSync(full, content)
   }
   process.env.WIKI_PATH = wikiDir
   process.env.RAW_PATH = rawDir
