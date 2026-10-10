@@ -140,11 +140,37 @@ function extractTitle(content: string, filePath: string): string {
   return match ? match[1].trim() : path.basename(filePath, '.md')
 }
 
-function extractWikilinks(content: string): string[] {
+// Link markdown standard verso altre pagine (`[testo](altra.md)`, `[testo](/cartella/altra.md#sez)`),
+// la convenzione di OKF. Il path è relativo alla cartella della pagina, o alla radice della wiki
+// se inizia con "/". Restano fuori URL esterni, file non .md e path che escono dalla wiki.
+const MARKDOWN_LINK_RE = /\[[^\][]*\]\(<?([^()\s>]+)>?(?:\s+"[^"]*")?\)/g
+const URL_SCHEME_RE = /^[a-z][a-z0-9+.-]*:/i
+
+function markdownLinkToSlug(target: string, fromPath: string): string | undefined {
+  if (URL_SCHEME_RE.test(target)) return undefined
+  let rel = target.replace(/[#?].*$/, '')
+  try {
+    rel = decodeURIComponent(rel)
+  } catch {
+    // percent-encoding malformato: si usa il target com'è
+  }
+  if (!rel.endsWith('.md')) return undefined
+  const joined = rel.startsWith('/')
+    ? path.posix.normalize(rel.slice(1))
+    : path.posix.join(path.posix.dirname(fromPath.split(path.sep).join('/')), rel)
+  if (joined === '..' || joined.startsWith('../') || path.posix.isAbsolute(joined)) return undefined
+  return joined.replace(/\.md$/, '')
+}
+
+function extractLinks(content: string, fromPath: string): string[] {
   const links: string[] = []
-  const regex = /\[\[([^\][|]+)(?:\|[^\][]+)?\]\]/g
+  const wikilink = /\[\[([^\][|]+)(?:\|[^\][]+)?\]\]/g
   let m: RegExpExecArray | null
-  while ((m = regex.exec(content)) !== null) links.push(m[1].trim())
+  while ((m = wikilink.exec(content)) !== null) links.push(m[1].trim())
+  while ((m = MARKDOWN_LINK_RE.exec(content)) !== null) {
+    const slug = markdownLinkToSlug(m[1], fromPath)
+    if (slug) links.push(slug)
+  }
   return [...new Set(links)]
 }
 
@@ -210,7 +236,7 @@ async function parsePage(relPath: string, full: string, stat: fs.Stats): Promise
       stato: data.stato,
     },
     content: content.trim(),
-    links: extractWikilinks(content),
+    links: extractLinks(content, relPath),
     updatedAt: instantToDate(stat.mtimeMs),
   }
 }

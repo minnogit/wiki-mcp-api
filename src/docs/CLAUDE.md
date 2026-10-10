@@ -143,6 +143,10 @@ affidabile; una pagina che mescola temi diversi diluisce entrambi.
 
 **Wikilink**: usa la sintassi Obsidian `[[nome-file]]` o `[[nome-file|testo]]`
 per i collegamenti interni. Per link a file in `raw/` usa il path relativo.
+Resta la convenzione di questa wiki, ma `wikiGraph` riconosce anche i link
+markdown a pagine `.md` (`[testo](altra.md)`, `[testo](/cartella/altra.md#sez)`,
+relativi alla pagina o alla radice di `wiki/`): non convertirli se li trovi in
+contenuti importati, ma per le pagine nuove usa i wikilink, per coerenza.
 
 **Citazioni**: quando un'affermazione viene da una sorgente, indicala in linea:
 `(fonte: raw/analisi-esempio.md)`. Per affermazioni normative/regolamentari,
@@ -337,8 +341,8 @@ la data di ultimo aggiornamento. Controlla:
    quasi-duplicate** (singolare/plurale, sinonimi) che spezzano un cluster
    reale in due — vedi §2 sopra.
 7. **Link rotti**: nel campo `reverse` di `wikiGraph`, uno slug presente come
-   chiave ma assente tra le pagine reali (`wikiListPages`) è un wikilink che
-   punta a una pagina non ancora creata.
+   chiave ma assente tra le pagine reali (`wikiListPages`) è un link (wikilink o
+   link markdown a `.md`) che punta a una pagina non ancora creata.
 8. **Lacune di copertura**: aree del dominio sotto-documentate.
 
 Produci un report sintetico in `analisi/lint-YYYY-MM-DD.md` e appendi a

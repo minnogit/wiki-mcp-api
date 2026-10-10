@@ -39,7 +39,7 @@ npx tsc --noEmit             # typecheck only (no lint script configured)
 - **`src/wiki/service.ts`** — all filesystem access:
   - Reads `WIKI_PATH` / `RAW_PATH` env vars at module load (`resolveDir`), defaulting to `./wiki` and `./raw` relative to cwd, resolved to absolute paths.
   - Pages are `.md` files under the wiki dir, parsed with `gray-matter` for YAML frontmatter (`tipo`, `tags`, `fonti`, `aggiornato`, `stato`). Title is extracted from the first `# H1` line, falling back to the filename.
-  - Wikilinks (`[[slug]]` / `[[slug|label]]`) are extracted from page content via regex for `wikiGraph`.
+  - Wikilinks (`[[slug]]` / `[[slug|label]]`) and relative markdown links to `.md` pages (`[x](a.md)`, `[x](/dir/a.md#sec)`, the OKF convention) are extracted via regex and normalized to slugs for `wikiGraph`; external URLs, non-`.md` targets and paths escaping the wiki dir are ignored.
   - Writes (`writePage`, `appendLog`) take an inter-process lock via `proper-lockfile` on the target file before writing, to avoid corrupting concurrent writes.
   - `getPage` and `writePage` guard against path traversal by resolving the full path and checking it still starts within the wiki dir; `readRaw` rejects filenames containing `/` or `..`. Preserve these checks in any change — they are the only thing enforcing "agent may write only to `wiki/`, never to `raw/`".
   - Dates derived from file mtime are formatted using `WIKI_TZ` (e.g. `Europe/Rome`) if set, otherwise the host machine's local timezone — relevant when the server runs in a different timezone than its users.
