@@ -200,9 +200,16 @@ basename) è ciò che identifica la sorgente ovunque venga referenziata (`fonti:
    diverse mantenendo lo stesso contenuto):
    - Nessuna riga con quel checksum → contenuto nuovo, primo ingest, procedi.
    - Il checksum corrisponde a una riga esistente ma con un path diverso →
-     il file è stato solo spostato/rinominato: **aggiorna la colonna "File"**
-     di quella riga col nuovo path, nessuna modifica alle pagine, e fermati
-     segnalando "file spostato, nessuna modifica di contenuto rilevata".
+     **verifica prima se il vecchio path esiste ancora** in `raw/` (con
+     `wikiListRaw`):
+     - Il vecchio path non esiste più → il file è stato solo
+       spostato/rinominato: **aggiorna la colonna "File"** di quella riga col
+       nuovo path, nessuna modifica alle pagine, e fermati segnalando "file
+       spostato, nessuna modifica di contenuto rilevata".
+     - Il vecchio path esiste ancora → non è uno spostamento ma un
+       **duplicato** (stesso contenuto in due path). **Non toccare
+       `sources.md`**: segnala all'utente i due path e chiedi se rimuoverne
+       uno o registrarli entrambi (in tal caso, una riga per path).
    - Il checksum corrisponde a una riga esistente con lo stesso path →
      avvisa l'utente "file già processato, nessuna modifica rilevata" e
      **fermati** (a meno che l'utente forzi con "forza ingest").
@@ -413,6 +420,8 @@ Formato:
   non la sua identità: l'identità per deduplicare (§4, §6) è il **checksum**.
   Se un file viene spostato/rinominato mantenendo lo stesso checksum, aggiorna
   il path in questa colonna invece di aggiungere una riga nuova.
+  Se invece due file con lo stesso checksum coesistono in `raw/` (duplicato), ognuno
+  ha la propria riga: il checksum da solo non basta a distinguerli, serve il path.
 
 Consultazione rapida da shell:
 
