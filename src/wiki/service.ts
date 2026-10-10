@@ -136,13 +136,13 @@ function buildSnippet(content: string, terms: string[]): string | undefined {
 }
 
 function extractTitle(content: string, filePath: string): string {
-  const match = /^#\s+(.+)$/m.exec(content)
+  const match = /^#[ \t]+(\S.*)$/m.exec(content)
   return match ? match[1].trim() : path.basename(filePath, '.md')
 }
 
 function extractWikilinks(content: string): string[] {
   const links: string[] = []
-  const regex = /\[\[([^\]|]+)(?:\|[^\]]+)?\]\]/g
+  const regex = /\[\[([^\][|]+)(?:\|[^\][]+)?\]\]/g
   let m: RegExpExecArray | null
   while ((m = regex.exec(content)) !== null) links.push(m[1].trim())
   return [...new Set(links)]
@@ -453,7 +453,7 @@ export async function rawDiff(filename: string, sinceChecksum?: string): Promise
   }
 
   if (!out.trim()) return { status: 'unchanged' }
-  if (/^Binary files .* differ$/m.test(out)) return { status: 'binary' }
+  if (out.split('\n').some((line) => line.startsWith('Binary files ') && line.endsWith(' differ'))) return { status: 'binary' }
   const truncated = out.length > RAW_DIFF_MAX_CHARS
   return { status: 'diff', base, diff: truncated ? out.slice(0, RAW_DIFF_MAX_CHARS) : out, truncated }
 }
