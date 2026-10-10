@@ -39,6 +39,21 @@ describe('getGraph', () => {
   })
 })
 
+describe('getGraph con link markdown (OKF)', () => {
+  it('risolve link relativi, rooted, con anchor e li fonde con i wikilink', async () => {
+    const svc = await init({
+      'a.md': frontmatter() + '# A\n\n[b](b.md#sez) [c](/sub/c.md) e [[d]] e [b ancora](./b.md "titolo").',
+      'b.md': frontmatter() + '# B',
+      'd.md': frontmatter() + '# D',
+      'sub/c.md': frontmatter() + '# C\n\n[su](../a.md) [fratello](e.md) [ext](https://x.org/f.md) [img](foto.png) [fuori](../../z.md)',
+    })
+    const g = await svc.getGraph()
+    expect(g.forward['a']).toEqual(['d', 'b', 'sub/c'])
+    expect(g.forward['sub/c']).toEqual(['a', 'sub/e'])
+    expect(g.reverse['b']).toEqual(['a'])
+  })
+})
+
 describe('getStatus', () => {
   it('conteggia per tipo e stato, incluse le categorie di default', async () => {
     const svc = await init({
