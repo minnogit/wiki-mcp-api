@@ -1,5 +1,5 @@
 import * as crypto from 'node:crypto'
-import { execFileSync } from 'node:child_process'
+import { execFileSync, spawnSync } from 'node:child_process'
 import * as fs from 'node:fs'
 import * as path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -107,5 +107,54 @@ describe('rawDiff', () => {
     const r = await f.svc.rawDiff('a*.md')
     expect(r.status === 'diff' && r.diff).toContain('+due')
     expect(r.status === 'diff' && r.diff).not.toContain('altro')
+  })
+})
+
+function minimalPdf(text: string): Buffer {
+  const stream = `BT /F1 12 Tf 10 100 Td (${text}) Tj ET`
+  const objs = [
+    '<< /Type /Catalog /Pages 2 0 R >>',
+    '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+    '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 200] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>',
+    `<< /Length ${stream.length} >>\nstream\n${stream}\nendstream`,
+    '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',
+  ]
+  let out = '%PDF-1.4\n%\0\0\0\0\n'
+  const offsets: number[] = []
+  objs.forEach((o, i) => {
+    offsets.push(out.length)
+    out += `${i + 1} 0 obj\n${o}\nendobj\n`
+  })
+  const xref = out.length
+  out += `xref\n0 ${objs.length + 1}\n0000000000 65535 f \n` + offsets.map((o) => `${String(o).padStart(10, '0')} 00000 n \n`).join('')
+  out += `trailer\n<< /Size ${objs.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`
+  return Buffer.from(out, 'latin1')
+}
+
+const hasPdftotext = spawnSync('pdftotext', ['-v']).error === undefined
+
+describe('rawDiff su PDF', () => {
+  it.skipIf(!hasPdftotext)('con *.pdf diff=pdf in .gitattributes mostra il diff del testo estratto', async () => {
+    const f = await init({ 'x.md': 'x' })
+    fs.writeFileSync(path.join(f.root, '.gitattributes'), '*.pdf diff=pdf\n')
+    const v1 = minimalPdf('versione prima')
+    fs.writeFileSync(path.join(f.rawDir, 'doc.pdf'), v1)
+    commitAll(f, 'pdf v1')
+    fs.writeFileSync(path.join(f.rawDir, 'doc.pdf'), minimalPdf('versione dopo'))
+
+    const r = await f.svc.rawDiff('doc.pdf', sha12(v1))
+    expect(r.status).toBe('diff')
+    if (r.status !== 'diff') return
+    expect(r.diff).toContain('-versione prima')
+    expect(r.diff).toContain('+versione dopo')
+  })
+
+  it('senza la mappatura in .gitattributes un PDF modificato resta binary', async () => {
+    const f = await init({ 'x.md': 'x' })
+    const v1 = minimalPdf('prima')
+    fs.writeFileSync(path.join(f.rawDir, 'doc.pdf'), v1)
+    commitAll(f, 'pdf v1')
+    fs.writeFileSync(path.join(f.rawDir, 'doc.pdf'), minimalPdf('dopo'))
+    expect(await f.svc.rawDiff('doc.pdf', sha12(v1))).toEqual({ status: 'binary' })
   })
 })
