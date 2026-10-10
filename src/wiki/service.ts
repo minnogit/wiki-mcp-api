@@ -2,9 +2,13 @@ import * as fs from 'node:fs'
 import * as fsp from 'node:fs/promises'
 import * as path from 'node:path'
 import * as crypto from 'node:crypto'
+import { execFile } from 'node:child_process'
+import { promisify } from 'node:util'
 import matter from 'gray-matter'
 import lockfile from 'proper-lockfile'
 import { z } from 'zod'
+
+const execFileAsync = promisify(execFile)
 
 const LOCK_OPTS = {
   retries: { retries: 10, factor: 1.5, minTimeout: 50, maxTimeout: 1000 },
@@ -354,6 +358,95 @@ export async function readRaw(filename: string): Promise<string> {
     if (isEnoent(e)) throw new Error(`File raw non trovato: ${filename}`)
     throw e
   }
+}
+
+export type RawDiffResult =
+  | { status: 'diff'; base: string; diff: string; truncated: boolean }
+  | { status: 'unchanged' | 'binary' | 'untracked' | 'no-git' | 'baseline-not-found' }
+
+const RAW_DIFF_MAX_CHARS = 200_000
+const RAW_DIFF_MAX_COMMITS = 500
+const CHECKSUM_RE = /^[0-9a-f]{12}$/i
+
+function runGit(args: string[]): Promise<string> {
+  return execFileAsync('git', ['--literal-pathspecs', '-C', RAW_DIR, ...args], {
+    maxBuffer: 32 * 1024 * 1024,
+    env: { ...process.env, GIT_PAGER: 'cat' },
+  }).then((r) => r.stdout)
+}
+
+// Trova il commit in cui il file aveva il checksum registrato in sources.md (stessa
+// definizione di fileChecksum: sha256 sul contenuto grezzo, primi 12 hex). Si ancora al
+// contenuto e non a un hash di commit annotato a mano, che può non corrispondere.
+async function findCommitByChecksum(filename: string, checksum: string): Promise<string | null> {
+  const commits = (await runGit(['log', `-n${RAW_DIFF_MAX_COMMITS}`, '--format=%H', '--', filename])).split('\n').filter(Boolean)
+  for (const commit of commits) {
+    let blob: Buffer
+    try {
+      blob = (
+        await execFileAsync('git', ['-C', RAW_DIR, 'show', `${commit}:./${filename}`], {
+          encoding: 'buffer',
+          maxBuffer: 64 * 1024 * 1024,
+        })
+      ).stdout
+    } catch {
+      continue
+    }
+    if (crypto.createHash('sha256').update(blob).digest('hex').slice(0, 12) === checksum.toLowerCase()) return commit
+  }
+  return null
+}
+
+export async function rawDiff(filename: string, sinceChecksum?: string): Promise<RawDiffResult> {
+  const full = path.resolve(RAW_DIR, filename)
+  if (path.isAbsolute(filename) || !full.startsWith(RAW_DIR + path.sep)) throw new Error('Filename non valido')
+  if (sinceChecksum !== undefined && !CHECKSUM_RE.test(sinceChecksum)) throw new Error('sinceChecksum deve essere di 12 caratteri esadecimali')
+  try {
+    await fsp.access(full)
+  } catch (e) {
+    if (isEnoent(e)) throw new Error(`File raw non trovato: ${filename}`)
+    throw e
+  }
+
+  try {
+    await runGit(['rev-parse', '--is-inside-work-tree'])
+  } catch {
+    return { status: 'no-git' }
+  }
+  try {
+    await runGit(['ls-files', '--error-unmatch', '--', filename])
+  } catch {
+    return { status: 'untracked' }
+  }
+
+  const diffOpts = ['--no-color', '--no-ext-diff']
+  let base: string
+  let out: string
+  try {
+    if (sinceChecksum) {
+      const commit = await findCommitByChecksum(filename, sinceChecksum)
+      if (!commit) return { status: 'baseline-not-found' }
+      base = commit
+      out = await runGit(['diff', ...diffOpts, commit, '--', filename])
+    } else {
+      base = 'HEAD'
+      out = await runGit(['diff', ...diffOpts, 'HEAD', '--', filename])
+      if (!out.trim()) {
+        const last = (await runGit(['log', '-n1', '--format=%H', '--', filename])).trim()
+        if (last) {
+          base = `${last}^`
+          out = await runGit(['show', ...diffOpts, '--format=', last, '--', filename])
+        }
+      }
+    }
+  } catch (e) {
+    throw new Error(`git diff fallito: ${((e as { stderr?: string }).stderr ?? (e as Error).message).trim()}`)
+  }
+
+  if (!out.trim()) return { status: 'unchanged' }
+  if (/^Binary files .* differ$/m.test(out)) return { status: 'binary' }
+  const truncated = out.length > RAW_DIFF_MAX_CHARS
+  return { status: 'diff', base, diff: truncated ? out.slice(0, RAW_DIFF_MAX_CHARS) : out, truncated }
 }
 
 async function checksumIn(dir: string, relPath: string): Promise<string> {

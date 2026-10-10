@@ -5,6 +5,7 @@ import { wikiListPagesTool } from './tools/list-pages.js'
 import { wikiWritePageTool } from './tools/write-page.js'
 import { wikiAppendLogTool } from './tools/append-log.js'
 import { wikiListRawTool, wikiReadRawTool } from './tools/read-raw.js'
+import { wikiRawDiffTool } from './tools/raw-diff.js'
 import { wikiChecksumTool } from './tools/checksum.js'
 import { wikiGraphTool } from './tools/graph.js'
 import { wikiStatusTool } from './tools/status.js'
@@ -26,6 +27,7 @@ const readOnlyTools = {
   wikiListPages: wikiListPagesTool,
   wikiListRaw: wikiListRawTool,
   wikiReadRaw: wikiReadRawTool,
+  wikiRawDiff: wikiRawDiffTool,
   wikiChecksum: wikiChecksumTool,
   wikiGraph: wikiGraphTool,
   wikiStatus: wikiStatusTool,
@@ -45,14 +47,14 @@ const instructions = `
 ${domainLine}
 
 Workflow principali:
-- INGEST: usa wikiListRaw, wikiReadRaw, wikiChecksum, wikiWritePage, wikiAppendLog
+- INGEST: usa wikiListRaw, wikiReadRaw, wikiRawDiff, wikiChecksum, wikiWritePage, wikiAppendLog. Se un raw già ingerito ha un checksum diverso da quello in sources.md, chiama wikiRawDiff (con sinceChecksum = checksum registrato in sources.md per quel file) e aggiorna le pagine in base al delta, senza riscrivere da zero; con esiti unchanged/binary/untracked/no-git/baseline-not-found ripiega su checksum e wikiReadRaw
 - QUERY: leggi prima wikiReadPage("index") per individuare le pagine candidate, poi usa wikiSearch, wikiReadPage, wikiListPages
 - LINT: usa wikiListPages, wikiGraph, wikiStatus
 
 Regole:
 - wikiWritePage scrive SOLO in wiki/, mai in raw/
 - wikiWritePage valida il frontmatter (tipo/tags/fonti/aggiornato/stato); index.md, log.md, sources.md e overview.md ne sono esenti
-- wikiReadRaw è read-only
+- wikiReadRaw e wikiRawDiff sono read-only
 - I path delle pagine sono relativi alla wiki dir (es. "concetti/verbale.md")
 `.trim()
 
