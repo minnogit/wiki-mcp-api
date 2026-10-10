@@ -56,6 +56,7 @@ npx tsc --noEmit             # typecheck only (no lint script configured)
 | `wikiWritePage` | `writePage` | stdio only | wiki/ only, `.md` only |
 | `wikiAppendLog` | `appendLog` | stdio only | appends to `wiki/log.md` |
 | `wikiListRaw` / `wikiReadRaw` | `listRaw` / `readRaw` | stdio + HTTP | read-only access to `raw/` |
+| `wikiRawDiff` | `rawDiff` | stdio + HTTP | git diff di un file di `raw/` rispetto alla versione col checksum registrato in `sources.md` (`sinceChecksum`); richiede `raw/` versionato in git, esegue `git` via `execFile` |
 | `wikiChecksum` | `fileChecksum` | stdio + HTTP | dedup check for the ingest workflow |
 | `wikiGraph` | `getGraph` | stdio + HTTP | slug -> list of linked slugs |
 | `wikiStatus` | `getStatus` | stdio + HTTP | page counts by `tipo`/`stato`, last-updated date |

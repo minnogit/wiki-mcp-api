@@ -54,8 +54,9 @@ Valuta se aggiungere `raw/` a `.gitignore`. Il checksum in `sources.md`
 basta per dedup/staleness (§4, §6) indipendentemente dal fatto che `raw/`
 sia versionato: quella scelta riguarda un'esigenza diversa, la
 **diffabilità**. Se `raw/` è tracciato in git, quando una sorgente viene
-re-ingerita puoi isolare esattamente cosa è cambiato con `git diff`/`git
-show <commit>:raw/percorso/file.md` invece di rileggere l'intero file e
+re-ingerita puoi isolare esattamente cosa è cambiato (con il tool
+`wikiRawDiff` se disponibile, altrimenti con `git diff`/`git show
+<commit>:raw/percorso/file.md` a mano) invece di rileggere l'intero file e
 confrontarlo a mano con le pagine wiki già scritte (dettaglio nel passo 3
 del workflow INGEST, §4) — molto più preciso e più economico, specie su
 sorgenti lunghe dove il delta reale è spesso una minima parte del file.
@@ -209,18 +210,33 @@ basename) è ciò che identifica la sorgente ovunque venga referenziata (`fonti:
      file aggiornato, procedi aggiornando quella riga segnalando "file
      aggiornato rispetto all'ultimo ingest".
 3. **Se il file è aggiornato (non un primo ingest) e `raw/` è tracciato in
-   git**, prima di rileggerlo per intero prova a isolare il delta reale con
-   `git diff`/`git show`: trova con `git log --oneline -- raw/percorso/file`
-   il commit la cui versione corrisponde al checksum precedente registrato
-   in `sources.md` (verificalo con `git show <commit>:raw/percorso/file |
-   sha256sum`), poi confronta quella versione con l'attuale
-   (`git diff <commit> -- raw/percorso/file`, o estrai entrambe in file
-   temporanei e usa `diff -u`). Isola esattamente le righe cambiate — molto
-   più preciso ed economico del rileggere l'intero file e confrontarlo a
-   mente con quanto già scritto nelle pagine wiki, specie su sorgenti lunghe
-   dove il delta reale è spesso una minima parte del file. Se `raw/` non è
-   (più) tracciato per quel file, procedi con la lettura integrale del
-   passo 4.
+   git**, prima di rileggerlo per intero isola il delta reale. Scegli il
+   metodo in base a ciò che hai a disposizione:
+   - **Tool `wikiRawDiff`** — disponibile solo se il server MCP `wiki-mcp-api`
+     è collegato in una versione che lo include (se non compare tra i tuoi
+     tool, non c'è) **e** `git` è installato sulla macchina dove gira il
+     server. Passa `filename` e `sinceChecksum` = checksum precedente in
+     `sources.md`: trova da solo il commit in cui il file aveva quel contenuto
+     e restituisce il diff fino alla versione attuale. Esiti senza diff
+     (`unchanged`, `binary`, `untracked`, `no-git`, `baseline-not-found`):
+     passa al metodo successivo o alla lettura integrale.
+   - **Comandi git a mano** — se non hai il tool ma hai una shell con `git`:
+     `git log --oneline -- raw/percorso/file.md`, trova il commit la cui
+     versione ha quel checksum (`git show <commit>:raw/percorso/file.md |
+     sha256sum`) e usa `git diff <commit> -- raw/percorso/file.md`.
+   - **Nessuno dei due** (client senza shell e senza il tool, o `git` assente):
+     procedi con la lettura integrale del passo 4, confrontando con le pagine
+     wiki già scritte.
+
+   Il diff isola esattamente le righe cambiate — molto più preciso ed
+   economico del rileggere l'intero file e confrontarlo a mente con quanto già
+   scritto nelle pagine wiki, specie su sorgenti lunghe dove il delta reale è
+   spesso una minima parte del file. In ogni caso la baseline esiste solo se
+   `raw/` viene **committato a fine di ogni ingest**: altrimenti la versione
+   ingerita non ha un commit e il diff non è ricostruibile
+   (`baseline-not-found`). I binari si marcano `binary` in `.gitattributes`;
+   per renderli diffabili si può definire un driver `textconv` (es.
+   `pdftotext`).
 4. **Leggi** la sorgente completa con `wikiReadRaw` (o, se hai isolato il
    delta al passo 3, la sola porzione cambiata con abbastanza contesto per
    capirla).
