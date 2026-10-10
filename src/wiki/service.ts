@@ -156,14 +156,17 @@ async function scanDir(dir: string, base: string, filter: (name: string) => bool
     if (isEnoent(e)) return []
     throw e
   }
-  const files: string[] = []
-  for (const entry of entries) {
-    if (entry.name.startsWith('.')) continue
-    const full = path.join(dir, entry.name)
-    if (entry.isDirectory()) files.push(...(await scanDir(full, base, filter)))
-    else if (entry.isFile() && filter(entry.name)) files.push(path.relative(base, full))
-  }
-  return files
+  const nested = await Promise.all(
+    entries
+      .filter((entry) => !entry.name.startsWith('.'))
+      .map(async (entry): Promise<string[]> => {
+        const full = path.join(dir, entry.name)
+        if (entry.isDirectory()) return scanDir(full, base, filter)
+        if (entry.isFile() && filter(entry.name)) return [path.relative(base, full)]
+        return []
+      }),
+  )
+  return nested.flat()
 }
 
 // Cache di parsing per singolo file: evita di rileggere/riparsare tutto il corpus a
