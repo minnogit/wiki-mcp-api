@@ -234,9 +234,11 @@ basename) è ciò che identifica la sorgente ovunque venga referenziata (`fonti:
    spesso una minima parte del file. In ogni caso la baseline esiste solo se
    `raw/` viene **committato a fine di ogni ingest**: altrimenti la versione
    ingerita non ha un commit e il diff non è ricostruibile
-   (`baseline-not-found`). I binari si marcano `binary` in `.gitattributes`;
-   per renderli diffabili si può definire un driver `textconv` (es.
-   `pdftotext`).
+   (`baseline-not-found`). I binari si marcano `binary` in `.gitattributes`.
+   I PDF si rendono diffabili con la riga `*.pdf diff=pdf` in `.gitattributes`
+   (il comando di conversione lo fornisce già il server, ma sulla macchina
+   dove gira serve `pdftotext`, pacchetto `poppler-utils`; se manca, il tool
+   risponde `binary`).
 4. **Leggi** la sorgente completa con `wikiReadRaw` (o, se hai isolato il
    delta al passo 3, la sola porzione cambiata con abbastanza contesto per
    capirla).

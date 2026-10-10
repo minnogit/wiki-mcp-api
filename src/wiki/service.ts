@@ -368,8 +368,14 @@ const RAW_DIFF_MAX_CHARS = 200_000
 const RAW_DIFF_MAX_COMMITS = 500
 const CHECKSUM_RE = /^[0-9a-f]{12}$/i
 
+// Il driver `pdf` è definito qui e non nella config git della macchina: la wiki collegata
+// deve solo mapparlo nei suoi .gitattributes (`*.pdf diff=pdf`). Senza `pdftotext` git
+// ripiega su "Binary files differ" e rawDiff risponde 'binary'.
+// Git accoda il file come ultimo argomento (qui diventa $0); pdftotext deve scrivere su stdout (`-`).
+const GIT_DIFF_DRIVERS = ['-c', 'diff.pdf.textconv=sh -c \'exec pdftotext -layout "$0" -\'']
+
 function runGit(args: string[]): Promise<string> {
-  return execFileAsync('git', ['--literal-pathspecs', '-C', RAW_DIR, ...args], {
+  return execFileAsync('git', [...GIT_DIFF_DRIVERS, '--literal-pathspecs', '-C', RAW_DIR, ...args], {
     maxBuffer: 32 * 1024 * 1024,
     env: { ...process.env, GIT_PAGER: 'cat' },
   }).then((r) => r.stdout)
