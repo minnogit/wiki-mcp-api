@@ -25,7 +25,7 @@ e co-evolve questo schema. L'agente **non modifica mai** `raw/`.
 
 ## 1. Architettura
 
-```
+```txt
 .
 ├── CLAUDE.md          # questo file (schema operativo)
 ├── raw/               # sorgenti immutabili (documentazione e analisi in markdown);
@@ -266,7 +266,7 @@ sha256sum`) e usa `git diff <commit> -- raw/percorso/file.md`.
 9. **Aggiorna `index.md`** (con `wikiWritePage`) con le nuove pagine e i nuovi link.
 10. **Appendi a `log.md`** con `wikiAppendLog` una voce:
 
-    ```
+    ```md
     ## [YYYY-MM-DD] ingest | nome-file-sorgente
     - Checksum: <sha256-12-chars>
     - Pagine create: [[pagina-1]], [[pagina-2]]
@@ -301,7 +301,7 @@ Trigger: l'utente fa una domanda di dominio.
 5. Se l'utente accetta, fila la risposta (`wikiWritePage`) e appendi a
    `log.md` con `wikiAppendLog`:
 
-   ```
+   ```md
    ## [YYYY-MM-DD] query | breve titolo della domanda
    - Pagine consultate: [[...]]
    - Filata in: [[...]]
@@ -393,13 +393,13 @@ Aggiorna a ogni ingest.
 
 Append-only. Formato obbligatorio dell'intestazione voce (per parsabilità):
 
-```
+```md
 ## [YYYY-MM-DD] <ingest|query|lint|refactor> | <titolo breve>
 ```
 
 Consultazione rapida da shell:
 
-```
+```shell
 grep "^## \[" wiki/log.md | tail -10
 ```
 
@@ -436,7 +436,7 @@ Formato:
 
 Consultazione rapida da shell:
 
-```
+```shell
 grep "raw/" wiki/sources.md
 ```
 
