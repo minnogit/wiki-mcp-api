@@ -13,7 +13,9 @@ export const wikiSearchTool = createTool({
   inputSchema: z.object({
     q: z.string().optional().describe('Testo da cercare in titolo e contenuto'),
     tag: z.string().optional().describe('Filtra per tag esatto (case-insensitive)'),
-    tipo: z.enum(['concetto', 'soggetto', 'procedura', 'normativa', 'entita', 'analisi']).optional(),
+    tipo: z
+      .enum(['concetto', 'soggetto', 'procedura', 'normativa', 'entita', 'analisi'])
+      .optional(),
     stato: z.enum(['bozza', 'stabile', 'da-rivedere']).optional(),
     topK: z
       .number()

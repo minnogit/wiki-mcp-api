@@ -42,10 +42,14 @@ describe('getGraph', () => {
 describe('getGraph con link markdown (OKF)', () => {
   it('risolve link relativi, rooted, con anchor e li fonde con i wikilink', async () => {
     const svc = await init({
-      'a.md': frontmatter() + '# A\n\n[b](b.md#sez) [c](/sub/c.md) e [[d]] e [b ancora](./b.md "titolo").',
+      'a.md':
+        frontmatter() +
+        '# A\n\n[b](b.md#sez) [c](/sub/c.md) e [[d]] e [b ancora](./b.md "titolo").',
       'b.md': frontmatter() + '# B',
       'd.md': frontmatter() + '# D',
-      'sub/c.md': frontmatter() + '# C\n\n[su](../a.md) [fratello](e.md) [ext](https://x.org/f.md) [img](foto.png) [fuori](../../z.md)',
+      'sub/c.md':
+        frontmatter() +
+        '# C\n\n[su](../a.md) [fratello](e.md) [ext](https://x.org/f.md) [img](foto.png) [fuori](../../z.md)',
     })
     const g = await svc.getGraph()
     expect(g.forward['a']).toEqual(['d', 'b', 'sub/c'])
@@ -67,25 +71,34 @@ describe('getStatus', () => {
     expect(s.byStato).toEqual({ bozza: 1, stabile: 1, 'senza-stato': 1 })
   })
 
-  it('lastUpdated usa la data semantica più recente, non il mtime', async ({ }) => {
-    const wikiDir = (await init({
-      'vecchia.md': frontmatter({ aggiornato: '2026-01-01' }) + '# V',
-      'recente.md': frontmatter({ aggiornato: '2026-08-22' }) + '# R',
-    })) && fixture!.wikiDir
+  it('lastUpdated usa la data semantica più recente, non il mtime', async ({}) => {
+    const wikiDir =
+      (await init({
+        'vecchia.md': frontmatter({ aggiornato: '2026-01-01' }) + '# V',
+        'recente.md': frontmatter({ aggiornato: '2026-08-22' }) + '# R',
+      })) && fixture!.wikiDir
     // mtime antichi: se lastUpdated fosse mtime-based, sarebbe 2025
     for (const f of ['vecchia.md', 'recente.md']) {
-      fs.utimesSync(path.join(wikiDir, f), new Date('2025-03-15T00:30:00Z'), new Date('2025-03-15T00:30:00Z'))
+      fs.utimesSync(
+        path.join(wikiDir, f),
+        new Date('2025-03-15T00:30:00Z'),
+        new Date('2025-03-15T00:30:00Z'),
+      )
     }
     expect((await fixture!.svc.getStatus()).lastUpdated).toBe('2026-08-22')
   })
 
-  it('senza date valide nel frontmatter ricade sul mtime', async ({ }) => {
+  it('senza date valide nel frontmatter ricade sul mtime', async ({}) => {
     process.env.WIKI_TZ = 'UTC'
     const svc = await init({
       'solo-mtime.md': '# Solo titolo, niente frontmatter valido',
     })
     const wikiDir = fixture!.wikiDir
-    fs.utimesSync(path.join(wikiDir, 'solo-mtime.md'), new Date('2025-06-10T12:00:00Z'), new Date('2025-06-10T12:00:00Z'))
+    fs.utimesSync(
+      path.join(wikiDir, 'solo-mtime.md'),
+      new Date('2025-06-10T12:00:00Z'),
+      new Date('2025-06-10T12:00:00Z'),
+    )
     expect((await svc.getStatus()).lastUpdated).toBe('2025-06-10')
     delete process.env.WIKI_TZ
   })

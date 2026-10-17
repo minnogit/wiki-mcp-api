@@ -82,11 +82,62 @@ export interface WikiStatus {
 }
 
 const STOPWORDS = new Set([
-  'di', 'a', 'da', 'in', 'con', 'su', 'per', 'tra', 'fra', 'il', 'lo', 'la', 'i', 'gli', 'le',
-  'un', 'uno', 'una', 'del', 'dello', 'della', 'dei', 'degli', 'delle', 'al', 'allo', 'alla',
-  'ai', 'agli', 'alle', 'dal', 'dallo', 'dalla', 'dai', 'dagli', 'dalle', 'nel', 'nello', 'nella',
-  'nei', 'negli', 'nelle', 'che', 'e', 'o', 'ma', 'se', 'come', 'anche', 'non', 'più', 'meno',
-  'si', 'ci', 'ne', 'è',
+  'di',
+  'a',
+  'da',
+  'in',
+  'con',
+  'su',
+  'per',
+  'tra',
+  'fra',
+  'il',
+  'lo',
+  'la',
+  'i',
+  'gli',
+  'le',
+  'un',
+  'uno',
+  'una',
+  'del',
+  'dello',
+  'della',
+  'dei',
+  'degli',
+  'delle',
+  'al',
+  'allo',
+  'alla',
+  'ai',
+  'agli',
+  'alle',
+  'dal',
+  'dallo',
+  'dalla',
+  'dai',
+  'dagli',
+  'dalle',
+  'nel',
+  'nello',
+  'nella',
+  'nei',
+  'negli',
+  'nelle',
+  'che',
+  'e',
+  'o',
+  'ma',
+  'se',
+  'come',
+  'anche',
+  'non',
+  'più',
+  'meno',
+  'si',
+  'ci',
+  'ne',
+  'è',
 ])
 
 function tokenize(text: string): string[] {
@@ -102,7 +153,12 @@ function termCounts(tokens: string[]): Map<string, number> {
 
 const FIELD_WEIGHTS = { title: 4, tags: 3, content: 1 }
 
-function scorePage(page: Page, queryTerms: string[], docFreq: Map<string, number>, corpusSize: number): number {
+function scorePage(
+  page: Page,
+  queryTerms: string[],
+  docFreq: Map<string, number>,
+  corpusSize: number,
+): number {
   const titleCounts = termCounts(tokenize(page.title))
   const tagCounts = termCounts(tokenize(page.frontmatter.tags.join(' ')))
   const contentCounts = termCounts(tokenize(page.content))
@@ -174,7 +230,11 @@ function extractLinks(content: string, fromPath: string): string[] {
   return [...new Set(links)]
 }
 
-async function scanDir(dir: string, base: string, filter: (name: string) => boolean = () => true): Promise<string[]> {
+async function scanDir(
+  dir: string,
+  base: string,
+  filter: (name: string) => boolean = () => true,
+): Promise<string[]> {
   let entries: fs.Dirent[]
   try {
     entries = await fsp.readdir(dir, { withFileTypes: true })
@@ -290,7 +350,8 @@ export async function searchPages(opts: SearchOpts): Promise<PageMeta[]> {
   const filtered = allPages.filter((p) => {
     if (opts.tipo && p.frontmatter.tipo !== opts.tipo) return false
     if (opts.stato && p.frontmatter.stato !== opts.stato) return false
-    if (opts.tag && !p.frontmatter.tags?.some((t) => t.toLowerCase() === opts.tag!.toLowerCase())) return false
+    if (opts.tag && !p.frontmatter.tags?.some((t) => t.toLowerCase() === opts.tag!.toLowerCase()))
+      return false
     return true
   })
 
@@ -302,7 +363,9 @@ export async function searchPages(opts: SearchOpts): Promise<PageMeta[]> {
     // query senza token utili (es. solo stopword/simboli): fallback a substring match
     const q = opts.q.toLowerCase()
     return filtered
-      .filter((p) => [p.title, p.content, ...(p.frontmatter.tags ?? [])].join(' ').toLowerCase().includes(q))
+      .filter((p) =>
+        [p.title, p.content, ...(p.frontmatter.tags ?? [])].join(' ').toLowerCase().includes(q),
+      )
       .slice(0, topK)
       .map((p) => ({ ...p, snippet: buildSnippet(p.content, [q]) }))
       .map(({ content, links, ...meta }) => meta)
@@ -317,7 +380,11 @@ export async function searchPages(opts: SearchOpts): Promise<PageMeta[]> {
   }
 
   return filtered
-    .map((p) => ({ ...p, score: scorePage(p, queryTerms, docFreq, allPages.length), snippet: buildSnippet(p.content, queryTerms) }))
+    .map((p) => ({
+      ...p,
+      score: scorePage(p, queryTerms, docFreq, allPages.length),
+      snippet: buildSnippet(p.content, queryTerms),
+    }))
     .filter((p) => p.score > 0)
     .sort((a, b) => b.score - a.score)
     .slice(0, topK)
@@ -328,7 +395,9 @@ const RESERVED_ROOT_FILES = new Set(['index.md', 'log.md', 'sources.md', 'overvi
 
 const FRONTMATTER_SCHEMA = z.object({
   tipo: z.enum(['concetto', 'soggetto', 'procedura', 'normativa', 'entita', 'analisi'], {
-    errorMap: () => ({ message: 'deve essere uno tra concetto|soggetto|procedura|normativa|entita|analisi' }),
+    errorMap: () => ({
+      message: 'deve essere uno tra concetto|soggetto|procedura|normativa|entita|analisi',
+    }),
   }),
   tags: z.array(z.string()).min(1, 'deve contenere almeno un tag'),
   fonti: z.array(z.string()),
@@ -341,13 +410,16 @@ const FRONTMATTER_SCHEMA = z.object({
 })
 
 function validateFrontmatter(relPath: string, content: string): void {
-  const isReserved = path.dirname(relPath) === '.' && RESERVED_ROOT_FILES.has(path.basename(relPath))
+  const isReserved =
+    path.dirname(relPath) === '.' && RESERVED_ROOT_FILES.has(path.basename(relPath))
   if (isReserved) return
 
   const { data } = matter(content)
   const result = FRONTMATTER_SCHEMA.safeParse(data)
   if (!result.success) {
-    const issues = result.error.issues.map((i) => `${i.path.join('.') || '(radice)'} ${i.message}`).join('; ')
+    const issues = result.error.issues
+      .map((i) => `${i.path.join('.') || '(radice)'} ${i.message}`)
+      .join('; ')
     throw new Error(`Frontmatter non valido in ${relPath}: ${issues}`)
   }
 }
@@ -375,12 +447,15 @@ export interface RawFileInfo {
 // qui sia in wiki/sources.md (che li registra come "raw/<path completo>").
 export async function listRaw(): Promise<RawFileInfo[]> {
   const relPaths = await scanDir(RAW_DIR, RAW_DIR)
-  return Promise.all(relPaths.map(async (filename) => ({ filename, checksum: await checksumIn(RAW_DIR, filename) })))
+  return Promise.all(
+    relPaths.map(async (filename) => ({ filename, checksum: await checksumIn(RAW_DIR, filename) })),
+  )
 }
 
 export async function readRaw(filename: string): Promise<string> {
   const full = path.resolve(RAW_DIR, filename)
-  if (path.isAbsolute(filename) || !full.startsWith(RAW_DIR + path.sep)) throw new Error('Filename non valido')
+  if (path.isAbsolute(filename) || !full.startsWith(RAW_DIR + path.sep))
+    throw new Error('Filename non valido')
   try {
     return await fsp.readFile(full, 'utf-8')
   } catch (e) {
@@ -404,17 +479,25 @@ const CHECKSUM_RE = /^[0-9a-f]{12}$/i
 const GIT_DIFF_DRIVERS = ['-c', 'diff.pdf.textconv=sh -c \'exec pdftotext -layout "$0" -\'']
 
 function runGit(args: string[]): Promise<string> {
-  return execFileAsync('git', [...GIT_DIFF_DRIVERS, '--literal-pathspecs', '-C', RAW_DIR, ...args], {
-    maxBuffer: 32 * 1024 * 1024,
-    env: { ...process.env, GIT_PAGER: 'cat' },
-  }).then((r) => r.stdout)
+  return execFileAsync(
+    'git',
+    [...GIT_DIFF_DRIVERS, '--literal-pathspecs', '-C', RAW_DIR, ...args],
+    {
+      maxBuffer: 32 * 1024 * 1024,
+      env: { ...process.env, GIT_PAGER: 'cat' },
+    },
+  ).then((r) => r.stdout)
 }
 
 // Trova il commit in cui il file aveva il checksum registrato in sources.md (stessa
 // definizione di fileChecksum: sha256 sul contenuto grezzo, primi 12 hex). Si ancora al
 // contenuto e non a un hash di commit annotato a mano, che può non corrispondere.
 async function findCommitByChecksum(filename: string, checksum: string): Promise<string | null> {
-  const commits = (await runGit(['log', `-n${RAW_DIFF_MAX_COMMITS}`, '--format=%H', '--', filename])).split('\n').filter(Boolean)
+  const commits = (
+    await runGit(['log', `-n${RAW_DIFF_MAX_COMMITS}`, '--format=%H', '--', filename])
+  )
+    .split('\n')
+    .filter(Boolean)
   for (const commit of commits) {
     let blob: Buffer
     try {
@@ -427,15 +510,20 @@ async function findCommitByChecksum(filename: string, checksum: string): Promise
     } catch {
       continue
     }
-    if (crypto.createHash('sha256').update(blob).digest('hex').slice(0, 12) === checksum.toLowerCase()) return commit
+    if (
+      crypto.createHash('sha256').update(blob).digest('hex').slice(0, 12) === checksum.toLowerCase()
+    )
+      return commit
   }
   return null
 }
 
 export async function rawDiff(filename: string, sinceChecksum?: string): Promise<RawDiffResult> {
   const full = path.resolve(RAW_DIR, filename)
-  if (path.isAbsolute(filename) || !full.startsWith(RAW_DIR + path.sep)) throw new Error('Filename non valido')
-  if (sinceChecksum !== undefined && !CHECKSUM_RE.test(sinceChecksum)) throw new Error('sinceChecksum deve essere di 12 caratteri esadecimali')
+  if (path.isAbsolute(filename) || !full.startsWith(RAW_DIR + path.sep))
+    throw new Error('Filename non valido')
+  if (sinceChecksum !== undefined && !CHECKSUM_RE.test(sinceChecksum))
+    throw new Error('sinceChecksum deve essere di 12 caratteri esadecimali')
   try {
     await fsp.access(full)
   } catch (e) {
@@ -475,13 +563,21 @@ export async function rawDiff(filename: string, sinceChecksum?: string): Promise
       }
     }
   } catch (e) {
-    throw new Error(`git diff fallito: ${((e as { stderr?: string }).stderr ?? (e as Error).message).trim()}`)
+    throw new Error(
+      `git diff fallito: ${((e as { stderr?: string }).stderr ?? (e as Error).message).trim()}`,
+    )
   }
 
   if (!out.trim()) return { status: 'unchanged' }
-  if (out.split('\n').some((line) => line.startsWith('Binary files ') && line.endsWith(' differ'))) return { status: 'binary' }
+  if (out.split('\n').some((line) => line.startsWith('Binary files ') && line.endsWith(' differ')))
+    return { status: 'binary' }
   const truncated = out.length > RAW_DIFF_MAX_CHARS
-  return { status: 'diff', base, diff: truncated ? out.slice(0, RAW_DIFF_MAX_CHARS) : out, truncated }
+  return {
+    status: 'diff',
+    base,
+    diff: truncated ? out.slice(0, RAW_DIFF_MAX_CHARS) : out,
+    truncated,
+  }
 }
 
 async function checksumIn(dir: string, relPath: string): Promise<string> {

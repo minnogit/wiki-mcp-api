@@ -10,7 +10,8 @@ export const wikiListRawTool = createTool({
     'Confronta i checksum con quelli registrati in wiki/sources.md per individuare in un colpo solo, senza chiamate ripetute a wikiChecksum, ' +
     'quali sorgenti sono nuove o sono cambiate rispetto all\'ultimo ingest (utile sia per INGEST sia per il controllo "pagine stale" del LINT).',
   inputSchema: z.object({}),
-  execute: async () => listRaw(),})
+  execute: async () => listRaw(),
+})
 
 export const wikiReadRawTool = createTool({
   id: 'wikiReadRaw',
@@ -18,7 +19,11 @@ export const wikiReadRawTool = createTool({
     'Legge un file dalla directory raw/ (sola lettura). Il filename è il path relativo a raw/, ' +
     'può includere sottocartelle, es. "flusso_pagamenti.md" o "verbali/2026-01.md".',
   inputSchema: z.object({
-    filename: z.string().describe('Path relativo del file in raw/ (anche in sottocartelle), es. "verbali/2026-01.md"'),
+    filename: z
+      .string()
+      .describe(
+        'Path relativo del file in raw/ (anche in sottocartelle), es. "verbali/2026-01.md"',
+      ),
   }),
   execute: async ({ filename }) => {
     try {

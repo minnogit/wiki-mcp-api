@@ -23,7 +23,10 @@ npm start                    # run the built dist/stdio.js
 npm run start:http           # run the built dist/http.js
 npm test                     # run the vitest suite (tests/*.test.ts)
 npx vitest run tests/write.test.ts   # run a single test file
-npx tsc --noEmit             # typecheck only (no lint script configured)
+npm run lint                 # typecheck (tsc --noEmit)
+npm run format               # format src/ and tests/ with prettier (.prettierrc)
+npm run format:check         # verify formatting without writing
+npx tsc --noEmit             # typecheck only (same as npm run lint)
 ```
 
 ## Architecture

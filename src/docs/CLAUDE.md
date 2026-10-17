@@ -234,7 +234,7 @@ basename) è ciò che identifica la sorgente ovunque venga referenziata (`fonti:
    - **Comandi git a mano** — se non hai il tool ma hai una shell con `git`:
      `git log --oneline -- raw/percorso/file.md`, trova il commit la cui
      versione ha quel checksum (`git show <commit>:raw/percorso/file.md |
-     sha256sum`) e usa `git diff <commit> -- raw/percorso/file.md`.
+sha256sum`) e usa `git diff <commit> -- raw/percorso/file.md`.
    - **Nessuno dei due** (client senza shell e senza il tool, o `git` assente):
      procedi con la lettura integrale del passo 4, confrontando con le pagine
      wiki già scritte.
@@ -250,6 +250,7 @@ basename) è ciò che identifica la sorgente ovunque venga referenziata (`fonti:
    (il comando di conversione lo fornisce già il server, ma sulla macchina
    dove gira serve `pdftotext`, pacchetto `poppler-utils`; se manca, il tool
    risponde `binary`).
+
 4. **Leggi** la sorgente completa con `wikiReadRaw` (o, se hai isolato il
    delta al passo 3, la sola porzione cambiata con abbastanza contesto per
    capirla).
@@ -359,22 +360,28 @@ breve descrizione e conteggio fonti:
 # Index
 
 ## Concetti
+
 - [[<entita-1>]] — <breve descrizione> (3 fonti)
 - [[<entita-2>]] — ...
 
 ## Soggetti
+
 - [[<ruolo-1>]] — <breve descrizione> (2 fonti)
 
 ## Procedure
+
 - ...
 
 ## Normativa
+
 - ...
 
 ## Modello dati
+
 - ...
 
 ## Analisi
+
 - ...
 ```
 
@@ -407,10 +414,10 @@ Formato:
 ```markdown
 # Sorgenti processate
 
-| File | SHA256 (12 car.) | Ultimo ingest | Pagine toccate |
-|------|-----------------|---------------|----------------|
-| raw/foo.md | a3f1b2c4d5e6 | 2026-06-28 | [[entita-1]], [[entita-2]] |
-| raw/verbali/2026-01.md | b7e2a9c1f0d3 | 2026-06-28 | [[entita-3]] |
+| File                   | SHA256 (12 car.) | Ultimo ingest | Pagine toccate             |
+| ---------------------- | ---------------- | ------------- | -------------------------- |
+| raw/foo.md             | a3f1b2c4d5e6     | 2026-06-28    | [[entita-1]], [[entita-2]] |
+| raw/verbali/2026-01.md | b7e2a9c1f0d3     | 2026-06-28    | [[entita-3]]               |
 ```
 
 - La colonna "File" usa sempre il path completo relativo a `raw/`, sottocartelle
@@ -474,11 +481,11 @@ e linka le pagine pertinenti.
 
 ## 12. Divisione di responsabilità
 
-| Layer        | Owner                                       |
-| ------------ | ------------------------------------------- |
-| `raw/`       | Utente (sola lettura per l'agente)          |
-| `wiki/`      | Agente (scrittura completa)                 |
-| `CLAUDE.md`  | Co-evoluto (utente decide, agente propone)  |
+| Layer       | Owner                                      |
+| ----------- | ------------------------------------------ |
+| `raw/`      | Utente (sola lettura per l'agente)         |
+| `wiki/`     | Agente (scrittura completa)                |
+| `CLAUDE.md` | Co-evoluto (utente decide, agente propone) |
 
 L'agente **non** modifica `raw/`. Mai. Se serve correggere una sorgente, lo
 fa l'utente manualmente.
