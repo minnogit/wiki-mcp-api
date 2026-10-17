@@ -283,17 +283,25 @@ function instantToDate(ms: number): string {
 
 async function parsePage(relPath: string, full: string, stat: fs.Stats): Promise<Page> {
   const raw = await fsp.readFile(full, 'utf-8')
-  const { data, content } = matter(raw)
+  const { data, content } = matter(raw) as { data: Record<string, unknown>; content: string }
+  const stringOrUndefined = (v: unknown): string | undefined =>
+    typeof v === 'string' ? v : undefined
+  const stringList = (v: unknown): string[] => (Array.isArray(v) ? v.map(String) : [])
+  // come in validateFrontmatter: una data YAML non quotata arriva come Date, va riportata a YYYY-MM-DD
+  const aggiornato =
+    data.aggiornato instanceof Date
+      ? data.aggiornato.toISOString().slice(0, 10)
+      : stringOrUndefined(data.aggiornato)
   return {
     path: relPath,
     slug: relPath.replace(/\.md$/, ''),
     title: extractTitle(content, relPath),
     frontmatter: {
-      tipo: data.tipo,
-      tags: Array.isArray(data.tags) ? data.tags : [],
-      fonti: Array.isArray(data.fonti) ? data.fonti : [],
-      aggiornato: data.aggiornato ? String(data.aggiornato) : undefined,
-      stato: data.stato,
+      tipo: stringOrUndefined(data.tipo),
+      tags: stringList(data.tags),
+      fonti: stringList(data.fonti),
+      aggiornato,
+      stato: stringOrUndefined(data.stato),
     },
     content: content.trim(),
     links: extractLinks(content, relPath),
