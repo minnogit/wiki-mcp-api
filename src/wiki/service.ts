@@ -204,7 +204,8 @@ const URL_SCHEME_RE = /^[a-z][a-z0-9+.-]*:/i
 
 function markdownLinkToSlug(target: string, fromPath: string): string | undefined {
   if (URL_SCHEME_RE.test(target)) return undefined
-  let rel = target.replace(/[#?].*$/, '')
+  const suffixStart = target.search(/[#?]/)
+  let rel = suffixStart === -1 ? target : target.slice(0, suffixStart)
   try {
     rel = decodeURIComponent(rel)
   } catch {
