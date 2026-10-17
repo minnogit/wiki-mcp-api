@@ -56,7 +56,7 @@ describe('readRaw / listRaw', () => {
 
   it('raw/ assente equivale a lista vuota', async () => {
     fixture = await setupService()
-    fixture.svc // module loaded
+    void fixture.svc // module loaded
     const { rmSync } = await import('node:fs')
     rmSync(fixture.rawDir, { recursive: true })
     expect(await fixture.svc.listRaw()).toEqual([])
