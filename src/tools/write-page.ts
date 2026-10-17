@@ -11,7 +11,9 @@ export const wikiWritePageTool = createTool({
     'Eccezione: index.md, log.md, sources.md e overview.md nella radice della wiki non richiedono frontmatter.',
   inputSchema: z.object({
     path: z.string().describe('Path relativo alla wiki dir, es. "concetti/verbale.md"'),
-    content: z.string().describe('Contenuto Markdown completo della pagina, incluso frontmatter YAML'),
+    content: z
+      .string()
+      .describe('Contenuto Markdown completo della pagina, incluso frontmatter YAML'),
   }),
   execute: async ({ path, content }) => {
     try {
