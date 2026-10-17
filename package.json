@@ -11,7 +11,7 @@
     "dev": "tsx src/stdio.ts",
     "dev:http": "tsx src/http.ts",
     "test": "vitest run",
-    "lint": "tsc --noEmit",
+    "lint": "eslint src tests && tsc -p tsconfig.check.json",
     "format": "prettier --write src tests",
     "format:check": "prettier --check src tests"
   },
@@ -26,10 +26,12 @@
   "devDependencies": {
     "@types/node": "^26.1.0",
     "@types/proper-lockfile": "^4.1.4",
+    "eslint": "10.11.0",
     "prettier": "3.9.9",
     "tsup": "^8.0.0",
     "tsx": "^4.0.0",
     "typescript": "^5.7.0",
+    "typescript-eslint": "8.71.0",
     "vitest": "^4.1.11"
   }
 }

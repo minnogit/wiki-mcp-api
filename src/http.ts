@@ -19,7 +19,7 @@ function isAuthorized(req: http.IncomingMessage): boolean {
   return scheme === 'Bearer' && value === TOKEN
 }
 
-const httpServer = http.createServer(async (req, res) => {
+async function handleRequest(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
   const url = new URL(req.url ?? '', `http://${req.headers.host ?? 'localhost'}`)
 
   if (url.pathname !== HTTP_PATH) {
@@ -42,7 +42,9 @@ const httpServer = http.createServer(async (req, res) => {
       res.writeHead(500).end('Internal server error')
     }
   }
-})
+}
+
+const httpServer = http.createServer((req, res) => void handleRequest(req, res))
 
 httpServer.listen(PORT, () => {
   console.log(`MCP wiki server (read-only) in ascolto su http://localhost:${PORT}${HTTP_PATH}`)
