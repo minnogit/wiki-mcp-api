@@ -1,6 +1,6 @@
 import 'dotenv/config'
 import http from 'node:http'
-import { remoteServer } from './server.js'
+import { rawOverHttp, remoteServer } from './server.js'
 
 const PORT = Number(process.env.MCP_HTTP_PORT ?? 3000)
 const HTTP_PATH = '/mcp'
@@ -48,4 +48,9 @@ const httpServer = http.createServer((req, res) => void handleRequest(req, res))
 
 httpServer.listen(PORT, () => {
   console.log(`MCP wiki server (read-only) in ascolto su http://localhost:${PORT}${HTTP_PATH}`)
+  console.log(
+    rawOverHttp
+      ? 'ATTENZIONE: MCP_HTTP_EXPOSE_RAW=true, i tool sulle sorgenti (raw/) sono esposti a chi ha il token.'
+      : 'Sorgenti (raw/) non esposte: solo i tool sulle pagine. MCP_HTTP_EXPOSE_RAW=true per abilitarle.',
+  )
 })
