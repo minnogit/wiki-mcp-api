@@ -2,6 +2,7 @@
   "name": "wiki-mcp-api",
   "version": "0.1.0",
   "description": "MCP server per la wiki di dominio LLM Wiki",
+  "license": "MIT",
   "type": "module",
   "bin": "dist/stdio.js",
   "scripts": {
