@@ -2,3 +2,8 @@ node_modules/
 dist/
 .env
 *.log
+
+# Metodo BMAD installato in locale: non si traccia (MIT di terzi senza il loro avviso di copyright, più configurazione personale)
+_bmad/
+_bmad-output/
+.claude/skills/bmad-*
