@@ -7,6 +7,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 A generic MCP (Model Context Protocol) server, built on `@mastra/mcp`, that exposes a markdown-file-based wiki to AI agents. It is domain-agnostic: the wiki content itself (pages, frontmatter conventions, ingest workflow) lives in an external directory pointed to by env vars, not in this repo. This repo is only the server/tool implementation.
 
 Two transports are exposed from the same tool set, defined in `src/server.ts`:
+
 - **stdio** (`src/stdio.ts`) — local process, full read+write tool set. This is what MCP clients (Claude Code, OpenCode) spawn directly.
 - **HTTP** (`src/http.ts`) — remote, **read-only**, Bearer-token authenticated. Refuses to start without `MCP_HTTP_TOKEN` set.
 
@@ -23,7 +24,9 @@ npm start                    # run the built dist/stdio.js
 npm run start:http           # run the built dist/http.js
 npm test                     # run the vitest suite (tests/*.test.ts)
 npx vitest run tests/write.test.ts   # run a single test file
-npx tsc --noEmit             # typecheck only (no lint script configured)
+npm run lint                 # eslint (typescript-eslint, type-aware) + tsc typecheck of src/ and tests/
+npm run format               # format src/ and tests/ with prettier (.prettierrc)
+npm run format:check         # verify formatting without writing
 ```
 
 ## Architecture
@@ -32,7 +35,7 @@ npx tsc --noEmit             # typecheck only (no lint script configured)
 - **`src/http.ts`** — HTTP entrypoint for remote read-only access. Validates a single fixed path (`/mcp`), checks a `Bearer <MCP_HTTP_TOKEN>` header on every request, and otherwise delegates to `remoteServer.startHTTP(...)`. Exits at startup if `MCP_HTTP_TOKEN` is unset — never relax this.
 - **`src/server.ts`** — instantiates two `MCPServer` instances from the same tool implementations:
   - `server` — full tool set (read + write), used by stdio.
-  - `remoteServer` — the read-only subset only (`readOnlyTools`), used by HTTP. When adding a new tool, decide explicitly whether it belongs in `readOnlyTools` (safe to expose remotely) or is write-capable (stdio-only, alongside `wikiWritePage`/`wikiAppendLog`).
+  - `remoteServer` — used by HTTP. By default only the page-reading tools (`wikiReadTools`: `wikiSearch`, `wikiReadPage`, `wikiListPages`, `wikiGraph`, `wikiStatus`); the source tools (`sourceTools`: `wikiListRaw`, `wikiReadRaw`, `wikiRawDiff`, `wikiChecksum`) are mounted only with `MCP_HTTP_EXPOSE_RAW=true`, because over HTTP they expose everything in `RAW_PATH` and its git history. `wikiChecksum` counts as a source tool: it also checks `raw/`. When adding a new tool, decide explicitly whether it belongs in `readOnlyTools` (safe to expose remotely) or is write-capable (stdio-only, alongside `wikiWritePage`/`wikiAppendLog`).
   - Also owns the `instructions` string the MCP client sees (summarizes the INGEST / QUERY / LINT workflows and the read/write boundary between `wiki/` and `raw/`); the HTTP variant appends a note that write tools are unavailable. The opening domain line comes from `WIKI_DOMAIN` — keep it configurable, never hardcode a specific wiki's domain here.
   - The exposed MCP tool name is the **key** in the `tools` object, not the tool's own `id` field. Keep the two identical (both camelCase) when adding a tool: they diverged once, and every doc plus the `instructions` string ended up advertising snake_case names that no client could call.
 - **`src/tools/*.ts`** — one file per MCP tool. Each is a thin `createTool({ id, description, inputSchema (zod), execute })` wrapper with no logic of its own; all real behavior belongs in `src/wiki/service.ts`. Keep this separation when adding tools — don't inline filesystem logic into a tool file.
@@ -55,9 +58,9 @@ npx tsc --noEmit             # typecheck only (no lint script configured)
 | `wikiListPages` | `searchPages` + client-side filter | stdio + HTTP | optional `categoria` = subfolder prefix |
 | `wikiWritePage` | `writePage` | stdio only | wiki/ only, `.md` only |
 | `wikiAppendLog` | `appendLog` | stdio only | appends to `wiki/log.md` |
-| `wikiListRaw` / `wikiReadRaw` | `listRaw` / `readRaw` | stdio + HTTP | read-only access to `raw/` |
-| `wikiRawDiff` | `rawDiff` | stdio + HTTP | git diff di un file di `raw/` rispetto alla versione col checksum registrato in `sources.md` (`sinceChecksum`); richiede `raw/` versionato in git, esegue `git` via `execFile` |
-| `wikiChecksum` | `fileChecksum` | stdio + HTTP | dedup check for the ingest workflow |
+| `wikiListRaw` / `wikiReadRaw` | `listRaw` / `readRaw` | stdio (+ HTTP only with `MCP_HTTP_EXPOSE_RAW=true`) | read-only access to `raw/` |
+| `wikiRawDiff` | `rawDiff` | stdio (+ HTTP only with `MCP_HTTP_EXPOSE_RAW=true`) | git diff di un file di `raw/` rispetto alla versione col checksum registrato in `sources.md` (`sinceChecksum`); richiede `raw/` versionato in git, esegue `git` via `execFile` |
+| `wikiChecksum` | `fileChecksum` | stdio (+ HTTP only with `MCP_HTTP_EXPOSE_RAW=true`) | dedup check for the ingest workflow; also checks `raw/`, so it is gated like the source tools |
 | `wikiGraph` | `getGraph` | stdio + HTTP | slug -> list of linked slugs |
 | `wikiStatus` | `getStatus` | stdio + HTTP | page counts by `tipo`/`stato`, last-updated date |
 
@@ -65,6 +68,7 @@ npx tsc --noEmit             # typecheck only (no lint script configured)
 
 - `WIKI_PATH` / `RAW_PATH` — required in practice; default to `./wiki` / `./raw` relative to cwd if unset.
 - `WIKI_DOMAIN` — one line stating which domain the connected wiki documents; injected at the top of the `instructions` string the MCP client receives. Set it per instance: one built binary can back several wikis at once (each MCP client entry passes its own `WIKI_PATH`/`RAW_PATH`), so a hardcoded domain line would describe the wrong wiki for all but one of them. Falls back to a neutral sentence pointing at the connected wiki's own `CLAUDE.md`.
+- `MCP_HTTP_EXPOSE_RAW` — read only by `src/server.ts` at load. Exactly `true` mounts the source tools on the HTTP server; anything else (including `1` or `TRUE`) leaves them out. Covered by `tests/remote-tools.test.ts`.
 - `WIKI_TZ` — optional IANA timezone (e.g. `Europe/Rome`) used to format mtime-derived dates consistently regardless of the host machine's local timezone.
 - `MCP_HTTP_PORT` — HTTP transport port, default `3000`.
 - `MCP_HTTP_TOKEN` — required for `src/http.ts`; process refuses to start without it.

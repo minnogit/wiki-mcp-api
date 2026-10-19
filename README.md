@@ -15,6 +15,7 @@ Il server è domain-agnostic: il contenuto della wiki e il dominio che documenta
 | `wikiAppendLog` | Aggiunge una riga di log all'ingest |
 | `wikiListRaw` | Elenca i file sorgente grezzi (`raw/`) |
 | `wikiReadRaw` | Legge un file sorgente grezzo (read-only) |
+| `wikiRawDiff` | Mostra cosa è cambiato in un file sorgente rispetto alla versione già ingerita, via git (sola lettura) |
 | `wikiChecksum` | Calcola il checksum di un file |
 | `wikiGraph` | Restituisce il grafo dei collegamenti tra pagine |
 | `wikiStatus` | Stato generale della wiki |
@@ -105,12 +106,15 @@ Aggiungi il server in `opencode.json` (globale in `~/.config/opencode/opencode.j
 
 ## Accesso remoto (sola lettura)
 
-Oltre allo stdio locale, il progetto espone un secondo entrypoint (`src/http.ts`) pensato per l'accesso da remoto: monta solo i tool di sola lettura (`wikiSearch`, `wikiReadPage`, `wikiListPages`, `wikiListRaw`, `wikiReadRaw`, `wikiChecksum`, `wikiGraph`, `wikiStatus`). `wikiWritePage` e `wikiAppendLog` restano disponibili **solo** via stdio locale: chi accede da remoto non può scrivere sulla wiki.
+Oltre allo stdio locale, il progetto espone un secondo entrypoint (`src/http.ts`) pensato per l'accesso da remoto, di sola lettura e limitato per default alle pagine della wiki: monta `wikiSearch`, `wikiReadPage`, `wikiListPages`, `wikiGraph` e `wikiStatus`. `wikiWritePage` e `wikiAppendLog` restano disponibili **solo** via stdio locale: chi accede da remoto non può scrivere sulla wiki.
+
+I tool sulle sorgenti (`wikiListRaw`, `wikiReadRaw`, `wikiRawDiff`, `wikiChecksum`) non sono montati in HTTP. Servono all'INGEST, che è un lavoro locale, e da remoto darebbero accesso a tutto ciò che sta in `RAW_PATH` e, con `wikiRawDiff`, alla sua storia git. `wikiChecksum` ne fa parte perché controlla anche `raw/`: senza i tool di lettura resterebbe un modo per sapere se un file esiste e qual è il suo hash. Se `RAW_PATH` contiene solo materiale che può leggere chiunque abbia il token, `MCP_HTTP_EXPOSE_RAW=true` li monta anche in HTTP.
 
 Configura in `.env`:
 
 - `MCP_HTTP_PORT` — porta di ascolto (default `3000`)
 - `MCP_HTTP_TOKEN` — token Bearer richiesto per autenticare le richieste; il processo si rifiuta di avviarsi se assente. Genera un valore casuale, es. `openssl rand -hex 32`.
+- `MCP_HTTP_EXPOSE_RAW` — se vale esattamente `true` monta in HTTP anche i tool sulle sorgenti (default: non montati). All'avvio il server dice se sono esposti.
 
 Avvio:
 

@@ -88,6 +88,14 @@ describe('getStatus', () => {
     expect((await fixture!.svc.getStatus()).lastUpdated).toBe('2026-08-22')
   })
 
+  it('una data YAML non quotata viene letta come YYYY-MM-DD', async () => {
+    const svc = await init({
+      'nonquotata.md':
+        '---\ntipo: concetto\ntags:\n  - t\nfonti: []\naggiornato: 2026-08-22\nstato: bozza\n---\n# N',
+    })
+    expect((await svc.getPage('nonquotata'))?.frontmatter.aggiornato).toBe('2026-08-22')
+  })
+
   it('senza date valide nel frontmatter ricade sul mtime', async ({}) => {
     process.env.WIKI_TZ = 'UTC'
     const svc = await init({
