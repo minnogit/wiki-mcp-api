@@ -7,7 +7,9 @@ const HTTP_PATH = '/mcp'
 const TOKEN = process.env.MCP_HTTP_TOKEN
 
 if (!TOKEN) {
-  console.error('MCP_HTTP_TOKEN non impostato: obbligatorio per esporre il server in HTTP. Interrompo.')
+  console.error(
+    'MCP_HTTP_TOKEN non impostato: obbligatorio per esporre il server in HTTP. Interrompo.',
+  )
   process.exit(1)
 }
 
@@ -26,7 +28,9 @@ const httpServer = http.createServer(async (req, res) => {
   }
 
   if (!isAuthorized(req)) {
-    res.writeHead(401, { 'Content-Type': 'application/json' }).end(JSON.stringify({ error: 'unauthorized' }))
+    res
+      .writeHead(401, { 'Content-Type': 'application/json' })
+      .end(JSON.stringify({ error: 'unauthorized' }))
     return
   }
 
