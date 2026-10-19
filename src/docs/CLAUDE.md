@@ -268,6 +268,7 @@ sha256sum`) e usa `git diff <commit> -- raw/percorso/file.md`.
 
     ```md
     ## [YYYY-MM-DD] ingest | nome-file-sorgente
+
     - Checksum: <sha256-12-chars>
     - Pagine create: [[pagina-1]], [[pagina-2]]
     - Pagine aggiornate: [[pagina-3]], [[pagina-4]]
@@ -303,6 +304,7 @@ Trigger: l'utente fa una domanda di dominio.
 
    ```md
    ## [YYYY-MM-DD] query | breve titolo della domanda
+
    - Pagine consultate: [[...]]
    - Filata in: [[...]]
    ```
