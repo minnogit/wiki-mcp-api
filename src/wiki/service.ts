@@ -624,17 +624,42 @@ export interface Graph {
 
 const EXCLUDED_FROM_ORPHANS = new Set([...RESERVED_ROOT_FILES].map((f) => f.replace(/\.md$/, '')))
 
+// Un wikilink si scrive col solo nome della pagina ([[git-submodule]]) anche se la pagina sta in
+// una sottocartella (concetti/git-submodule), come in Obsidian. Si risolve così: slug esatto, poi
+// unica pagina con quel nome, poi, se il nome è ambiguo, la pagina nella stessa cartella di chi
+// linka. Se nessuna regola decide, il link resta com'è e compare in `reverse` come link rotto.
+function resolveLink(
+  link: string,
+  fromSlug: string,
+  slugs: Set<string>,
+  byName: Map<string, string[]>,
+): string {
+  if (slugs.has(link)) return link
+  const candidates =
+    byName.get(path.posix.basename(link))?.filter((s) => s.endsWith('/' + link)) ?? []
+  if (candidates.length === 1) return candidates[0]
+  const sameDir = path.posix.join(path.posix.dirname(fromSlug), link)
+  return candidates.includes(sameDir) ? sameDir : link
+}
+
 export async function getGraph(): Promise<Graph> {
   const pages = await getAllPages()
   const forward: Record<string, string[]> = {}
   const reverse: Record<string, string[]> = {}
 
+  const slugs = new Set(pages.map((p) => p.slug))
+  const byName = new Map<string, string[]>()
+  for (const s of slugs) {
+    const name = path.posix.basename(s)
+    byName.set(name, [...(byName.get(name) ?? []), s])
+  }
+
   for (const p of pages) {
-    forward[p.slug] = p.links
+    forward[p.slug] = [...new Set(p.links.map((l) => resolveLink(l, p.slug, slugs, byName)))]
     reverse[p.slug] = reverse[p.slug] ?? []
   }
   for (const p of pages) {
-    for (const linked of p.links) {
+    for (const linked of forward[p.slug]) {
       reverse[linked] = [...(reverse[linked] ?? []), p.slug]
     }
   }
