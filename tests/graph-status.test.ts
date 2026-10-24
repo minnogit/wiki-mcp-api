@@ -37,6 +37,27 @@ describe('getGraph', () => {
     expect(g.forward['inesistente']).toBeUndefined()
     expect(g.reverse['inesistente']).toEqual(['x'])
   })
+
+  it('risolve i wikilink per nome verso pagine in sottocartelle, come Obsidian', async () => {
+    const svc = await init({
+      'concetti/a.md': frontmatter() + '# A\n\nVedi [[b]] e [[procedure/c]].',
+      'procedure/b.md': frontmatter() + '# B\n\nTorna ad [[a]].',
+      'procedure/c.md': frontmatter() + '# C',
+      // nome ambiguo: vince la pagina nella stessa cartella di chi linka
+      'x/doppio.md': frontmatter() + '# D1\n\nVedi [[doppio]].',
+      'y/doppio.md': frontmatter() + '# D2',
+      'z/linker.md': frontmatter() + '# L\n\nVedi [[doppio]].',
+    })
+    const g = await svc.getGraph()
+    expect(g.forward['concetti/a']).toEqual(['procedure/b', 'procedure/c'])
+    expect(g.forward['procedure/b']).toEqual(['concetti/a'])
+    expect(g.reverse['procedure/b']).toEqual(['concetti/a'])
+    expect(g.forward['x/doppio']).toEqual(['x/doppio'])
+    // ambiguo e nessuna pagina nella stessa cartella: resta irrisolto, come un link rotto
+    expect(g.forward['z/linker']).toEqual(['doppio'])
+    expect(g.orphans).not.toContain('concetti/a')
+    expect(g.orphans).not.toContain('procedure/b')
+  })
 })
 
 describe('getGraph con link markdown (OKF)', () => {
