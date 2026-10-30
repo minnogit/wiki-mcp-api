@@ -9,7 +9,7 @@ Type=simple
 User=wikimcp
 Group=wikimcp
 WorkingDirectory=/opt/wiki-mcp-api
-# Contiene MCP_HTTP_TOKEN, WIKI_PATH, RAW_PATH, ... (vedi deploy/README.md)
+# Contiene MCP_HTTP_TOKEN, WIKI_PATH, RAW_PATH oppure WIKI_CONFIG, ... (vedi deploy/README.md)
 EnvironmentFile=/etc/wiki-mcp/http.env
 ExecStart=/usr/bin/node /opt/wiki-mcp-api/dist/http.js
 Restart=on-failure

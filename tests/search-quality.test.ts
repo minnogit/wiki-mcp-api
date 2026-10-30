@@ -3,8 +3,8 @@ import { cleanup, frontmatter, setupService } from './helpers'
 
 let fixture: Awaited<ReturnType<typeof setupService>> | null = null
 
-async function init(files: Record<string, string>) {
-  fixture = await setupService(files)
+function init(files: Record<string, string>) {
+  fixture = setupService(files)
   return fixture.svc
 }
 
@@ -17,7 +17,7 @@ const paths = (res: { path: string }[]): string[] => res.map((r) => r.path)
 
 describe('searchPages: normalizzazione', () => {
   it('ignora accenti e maiuscole in entrambi i versi', async () => {
-    const svc = await init({
+    const svc = init({
       'a.md': frontmatter() + '# A\n\nSpiegato perché serve.',
       'b.md': frontmatter() + '# B\n\nIl perche non è chiaro.',
       'c.md': frontmatter() + '# C\n\nNiente.',
@@ -28,7 +28,7 @@ describe('searchPages: normalizzazione', () => {
   })
 
   it('trova la parola dopo l’apostrofo e lo snippet la mostra', async () => {
-    const svc = await init({ 'a.md': frontmatter() + "# A\n\nVedi l’articolo 21 e dell'obbligo." })
+    const svc = init({ 'a.md': frontmatter() + "# A\n\nVedi l’articolo 21 e dell'obbligo." })
     const res = await svc.searchPages({ q: 'articolo' })
     expect(paths(res)).toEqual(['a.md'])
     expect(res[0].snippet).toContain('articolo 21')
@@ -38,7 +38,7 @@ describe('searchPages: normalizzazione', () => {
 
 describe('searchPages: stemming leggero', () => {
   it('fa incontrare singolare/plurale e maschile/femminile', async () => {
-    const svc = await init({
+    const svc = init({
       'a.md': frontmatter() + '# Fattura elettronica\n\nTesto.',
       'b.md': frontmatter() + '# B\n\nLe banche e il negozio.',
       'c.md': frontmatter() + '# C\n\nNiente.',
@@ -51,7 +51,7 @@ describe('searchPages: stemming leggero', () => {
 
 describe('searchPages: ranking', () => {
   it('ripetere un termine nel corpo non batte titolo e tag', async () => {
-    const svc = await init({
+    const svc = init({
       'titolo.md': frontmatter({ tags: ['fattura'] }) + '# Fattura\n\nTesto.',
       'ripetuta.md': frontmatter() + '# Altro\n\n' + 'fattura '.repeat(30),
     })
@@ -66,7 +66,7 @@ describe('searchPages: frasi tra virgolette', () => {
   }
 
   it('senza virgolette matcha entrambe, con virgolette solo la frase', async () => {
-    const svc = await init(files)
+    const svc = init(files)
     expect(paths(await svc.searchPages({ q: 'verbale accertamento' })).sort()).toEqual([
       'no.md',
       'si.md',
@@ -79,7 +79,7 @@ describe('searchPages: frasi tra virgolette', () => {
   })
 
   it('combina frase e termini liberi', async () => {
-    const svc = await init({
+    const svc = init({
       ...files,
       'si2.md': frontmatter() + '# Si2\n\nVerbale di accertamento e sanzione.',
     })
@@ -90,7 +90,7 @@ describe('searchPages: frasi tra virgolette', () => {
 
 describe('searchPages: refusi lievi', () => {
   it('trova con un carattere sbagliato, mancante o in più, ma non con parole corte', async () => {
-    const svc = await init({
+    const svc = init({
       'a.md': frontmatter() + '# A\n\nVerbale di accertamento.',
       'b.md': frontmatter() + '# B\n\nUna casa.',
     })
@@ -101,7 +101,7 @@ describe('searchPages: refusi lievi', () => {
   })
 
   it('un termine corretto per tolleranza pesa meno di uno scritto giusto', async () => {
-    const svc = await init({ 'a.md': frontmatter() + '# A\n\nParola accertamento qui.' })
+    const svc = init({ 'a.md': frontmatter() + '# A\n\nParola accertamento qui.' })
     const [exact] = await svc.searchPages({ q: 'accertamento' })
     const [typo] = await svc.searchPages({ q: 'accertamneto' })
     expect(typo.score).toBeGreaterThan(0)
@@ -111,7 +111,7 @@ describe('searchPages: refusi lievi', () => {
 
 describe('searchPages: cache dell’indice', () => {
   it('riflette le modifiche ai file (invalidazione come pageCache)', async () => {
-    const svc = await init({ 'a.md': frontmatter() + '# A\n\nPrimo testo.' })
+    const svc = init({ 'a.md': frontmatter() + '# A\n\nPrimo testo.' })
     expect(await svc.searchPages({ q: 'novita' })).toEqual([])
     await svc.writePage('a.md', frontmatter() + '# A\n\nNovità importante, molto più lungo.')
     expect(paths(await svc.searchPages({ q: 'novità' }))).toEqual(['a.md'])

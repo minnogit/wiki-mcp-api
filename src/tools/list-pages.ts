@@ -1,20 +1,21 @@
 import { createTool } from '@mastra/core/tools'
 import { z } from 'zod'
-import { getAllPages } from '../wiki/service.js'
+import type { WikiService } from '../wiki/service.js'
 
-export const wikiListPagesTool = createTool({
-  id: 'wikiListPages',
-  description:
-    'Elenca tutte le pagine della wiki con metadati (senza contenuto). Opzionalmente filtra per categoria (sottocartella), es. "concetti", "analisi". **Uso via ToolSearch:** Dopo aver caricato con `ToolSearch`, invoca direttamente come `mcp__wiki-mcp-api__wikiListPages` — il tool diventa immediatamente disponibile.',
-  inputSchema: z.object({
-    categoria: z
-      .string()
-      .optional()
-      .describe('Sottocartella da filtrare, es. "concetti", "analisi", "procedure"'),
-  }),
-  execute: async ({ categoria }) => {
-    const pages = (await getAllPages()).map(({ content, links, ...meta }) => meta)
-    if (!categoria) return pages
-    return pages.filter((p) => p.path.startsWith(categoria + '/'))
-  },
-})
+export const wikiListPagesTool = (svc: WikiService) =>
+  createTool({
+    id: 'wikiListPages',
+    description:
+      'Elenca tutte le pagine della wiki con metadati (senza contenuto). Opzionalmente filtra per categoria (sottocartella), es. "concetti", "analisi". **Uso via ToolSearch:** Dopo aver caricato con `ToolSearch`, invoca direttamente come `mcp__wiki-mcp-api__wikiListPages` — il tool diventa immediatamente disponibile.',
+    inputSchema: z.object({
+      categoria: z
+        .string()
+        .optional()
+        .describe('Sottocartella da filtrare, es. "concetti", "analisi", "procedure"'),
+    }),
+    execute: async ({ categoria }) => {
+      const pages = (await svc.getAllPages()).map(({ content, links, ...meta }) => meta)
+      if (!categoria) return pages
+      return pages.filter((p) => p.path.startsWith(categoria + '/'))
+    },
+  })

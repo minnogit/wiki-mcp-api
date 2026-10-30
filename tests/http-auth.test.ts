@@ -79,9 +79,9 @@ describe('server HTTP (end-to-end, porta effimera)', () => {
     mcpCalls = 0
     const handler = createRequestHandler({
       token: 'tok',
-      httpPath: '/mcp',
+      wikis: ['default'],
       limiter: new FailureRateLimiter({ maxFailures, windowMs: 60_000 }),
-      mcp: (_url, _req, res) => {
+      mcp: (_wiki, _url, _req, res) => {
         mcpCalls++
         res.writeHead(200).end('mcp')
         return Promise.resolve()

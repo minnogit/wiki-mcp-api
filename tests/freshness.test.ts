@@ -3,7 +3,7 @@ import * as fs from 'node:fs'
 import * as os from 'node:os'
 import * as path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { cleanup, frontmatter, setupService } from './helpers'
+import { cleanup, frontmatter, makeService, setupService } from './helpers'
 
 let fixture: Awaited<ReturnType<typeof setupService>> | null = null
 const extra: string[] = []
@@ -26,7 +26,7 @@ const page = { 'a.md': frontmatter() + '# A' }
 
 describe('wikiStatus: source (freschezza)', () => {
   it('wiki in un repo git: SHA breve e data del commit, senza percorsi né remote', async () => {
-    fixture = await setupService(page)
+    fixture = setupService(page)
     git(fixture.wikiDir, 'init', '-q')
     git(fixture.wikiDir, 'add', '-A')
     git(fixture.wikiDir, 'commit', '-q', '-m', 'v1')
@@ -43,7 +43,7 @@ describe('wikiStatus: source (freschezza)', () => {
   })
 
   it('wiki come sottocartella del repo: usa il HEAD del repo contenitore', async () => {
-    fixture = await setupService(page, { 'r.md': 'x' })
+    fixture = setupService(page, { 'r.md': 'x' })
     git(fixture.root, 'init', '-q')
     git(fixture.root, 'add', '-A')
     git(fixture.root, 'commit', '-q', '-m', 'v1')
@@ -53,7 +53,7 @@ describe('wikiStatus: source (freschezza)', () => {
   })
 
   it("syncedAt segue l'mtime di FETCH_HEAD dopo un fetch", async () => {
-    fixture = await setupService(page)
+    fixture = setupService(page)
     git(fixture.root, 'init', '-q')
     git(fixture.root, 'add', '-A')
     git(fixture.root, 'commit', '-q', '-m', 'v1')
@@ -63,7 +63,7 @@ describe('wikiStatus: source (freschezza)', () => {
     const wikiClone = path.join(clone, 'c', 'wiki')
     git(wikiClone, 'fetch', '-q')
 
-    const f2 = await setupWith(wikiClone, path.join(clone, 'c', 'raw'))
+    const f2 = makeService(wikiClone, path.join(clone, 'c', 'raw'))
     const st = await f2.getStatus()
     expect(st.source?.syncedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/)
     const mtime = fs.statSync(path.join(clone, 'c', '.git', 'FETCH_HEAD')).mtime.toISOString()
@@ -71,7 +71,7 @@ describe('wikiStatus: source (freschezza)', () => {
   })
 
   it('wiki fuori da git: campo assente e nessun errore', async () => {
-    fixture = await setupService(page)
+    fixture = setupService(page)
     // la fixture sta in tmpdir, non dentro un repo: nessun git init
     const st = await fixture.svc.getStatus()
     expect(st.source).toBeUndefined()
@@ -79,7 +79,7 @@ describe('wikiStatus: source (freschezza)', () => {
   })
 
   it('git non disponibile: campo assente, nessun errore', async () => {
-    fixture = await setupService(page)
+    fixture = setupService(page)
     const oldPath = process.env.PATH
     process.env.PATH = ''
     try {
@@ -91,11 +91,3 @@ describe('wikiStatus: source (freschezza)', () => {
     }
   })
 })
-
-async function setupWith(wikiDir: string, rawDir: string) {
-  const { vi } = await import('vitest')
-  process.env.WIKI_PATH = wikiDir
-  process.env.RAW_PATH = rawDir
-  vi.resetModules()
-  return import('../src/wiki/service.js')
-}

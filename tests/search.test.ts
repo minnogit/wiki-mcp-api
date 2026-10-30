@@ -3,8 +3,8 @@ import { cleanup, frontmatter, setupService } from './helpers'
 
 let fixture: Awaited<ReturnType<typeof setupService>> | null = null
 
-async function init(files: Record<string, string>) {
-  fixture = await setupService(files)
+function init(files: Record<string, string>) {
+  fixture = setupService(files)
   return fixture.svc
 }
 
@@ -15,7 +15,7 @@ afterEach(() => {
 
 describe('searchPages', () => {
   it('ordina per rilevanza: titolo > tag > contenuto', async () => {
-    const svc = await init({
+    const svc = init({
       'titolo.md': frontmatter() + '# Parolachiave in titolo\n\nTesto senza termini.',
       'tag.md': frontmatter({ tags: ['parolachiave'] }) + '# Titolo neutro\n\nContenuto generico.',
       'contenuto.md': frontmatter() + '# Titolo neutro\n\nParola parolachiave nel testo.',
@@ -28,7 +28,7 @@ describe('searchPages', () => {
   })
 
   it('filtra per tag case-insensitive, tipo e stato', async () => {
-    const svc = await init({
+    const svc = init({
       'a.md': frontmatter({ tags: ['Verbali'] }) + '# A',
       'b.md': frontmatter({ tags: ['altro'], tipo: 'analisi' }) + '# B',
       'c.md': frontmatter({ tags: ['test'], stato: 'stabile' }) + '# C',
@@ -42,13 +42,13 @@ describe('searchPages', () => {
     const files = Object.fromEntries(
       Array.from({ length: 5 }, (_, i) => [`p${i}.md`, frontmatter() + `# P${i}`]),
     )
-    const svc = await init(files)
+    const svc = init(files)
     expect(await svc.searchPages({})).toHaveLength(5)
     expect(await svc.searchPages({ topK: 2 })).toHaveLength(2)
   })
 
   it('query di sole stopwords: fallback substring match con snippet', async () => {
-    const svc = await init({
+    const svc = init({
       'x.md': frontmatter() + '# X\n\nLa parola RARA-TERM qui.',
       'y.md': frontmatter() + '# Y\n\nNiente.',
     })
@@ -58,7 +58,7 @@ describe('searchPages', () => {
   })
 
   it('non espone content né links nei risultati', async () => {
-    const svc = await init({ 'solo.md': frontmatter() + '# S\n\nVedi [[altra]] e termine.' })
+    const svc = init({ 'solo.md': frontmatter() + '# S\n\nVedi [[altra]] e termine.' })
     const [only] = await svc.searchPages({ q: 'termine' })
     expect(only).not.toHaveProperty('content')
     expect(only).not.toHaveProperty('links')

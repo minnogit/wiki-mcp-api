@@ -24,8 +24,8 @@ function git(cwd: string, ...args: string[]): string {
   )
 }
 
-async function init(raw: Record<string, string>, opts: { repo?: boolean } = { repo: true }) {
-  fixture = await setupService({}, raw)
+function init(raw: Record<string, string>, opts: { repo?: boolean } = { repo: true }) {
+  fixture = setupService({}, raw)
   if (opts.repo) {
     git(fixture.root, 'init', '-q')
     git(fixture.root, 'add', '-A')
@@ -41,7 +41,7 @@ function commitAll(f: { root: string }, msg: string): void {
 
 describe('rawDiff', () => {
   it('con sinceChecksum trova il commit di baseline e mostra tutte le modifiche successive, anche committate', async () => {
-    const f = await init({ 'sub/a.md': 'uno\ndue\ntre\n' })
+    const f = init({ 'sub/a.md': 'uno\ndue\ntre\n' })
     const baseline = sha12('uno\ndue\ntre\n')
     fs.writeFileSync(path.join(f.rawDir, 'sub/a.md'), 'uno\nDUE\ntre\n')
     commitAll(f, 'v2')
@@ -57,7 +57,7 @@ describe('rawDiff', () => {
   })
 
   it("senza sinceChecksum mostra le modifiche non committate, altrimenti l'ultimo commit", async () => {
-    const f = await init({ 'a.md': 'uno\n' })
+    const f = init({ 'a.md': 'uno\n' })
     fs.writeFileSync(path.join(f.rawDir, 'a.md'), 'uno\ndue\n')
     const dirty = await f.svc.rawDiff('a.md')
     expect(dirty.status === 'diff' && dirty.diff).toContain('+due')
@@ -68,19 +68,19 @@ describe('rawDiff', () => {
   })
 
   it('unchanged se il file coincide con la baseline', async () => {
-    const f = await init({ 'a.md': 'uno\n' })
+    const f = init({ 'a.md': 'uno\n' })
     expect(await f.svc.rawDiff('a.md', sha12('uno\n'))).toEqual({ status: 'unchanged' })
   })
 
   it('baseline-not-found se nessun commit ha quel checksum', async () => {
-    const f = await init({ 'a.md': 'uno\n' })
+    const f = init({ 'a.md': 'uno\n' })
     expect(await f.svc.rawDiff('a.md', sha12('mai committato'))).toEqual({
       status: 'baseline-not-found',
     })
   })
 
   it('binary per file binari', async () => {
-    const f = await init({ 'x.md': 'x' })
+    const f = init({ 'x.md': 'x' })
     fs.writeFileSync(path.join(f.rawDir, 'b.bin'), Buffer.from([0, 1, 2, 3, 0, 255]))
     commitAll(f, 'bin')
     const baseline = sha12(Buffer.from([0, 1, 2, 3, 0, 255]))
@@ -89,18 +89,18 @@ describe('rawDiff', () => {
   })
 
   it('untracked per file non versionati', async () => {
-    const f = await init({ 'a.md': 'uno\n' })
+    const f = init({ 'a.md': 'uno\n' })
     fs.writeFileSync(path.join(f.rawDir, 'nuovo.md'), 'x')
     expect(await f.svc.rawDiff('nuovo.md')).toEqual({ status: 'untracked' })
   })
 
   it('no-git se raw/ non è in un repo', async () => {
-    const f = await init({ 'a.md': 'uno\n' }, { repo: false })
+    const f = init({ 'a.md': 'uno\n' }, { repo: false })
     expect(await f.svc.rawDiff('a.md')).toEqual({ status: 'no-git' })
   })
 
   it('rifiuta traversal, path assoluti, checksum malformati e file mancanti', async () => {
-    const f = await init({ 'a.md': 'uno\n' })
+    const f = init({ 'a.md': 'uno\n' })
     await expect(f.svc.rawDiff('../fuori.txt')).rejects.toThrow('non valido')
     await expect(f.svc.rawDiff('/etc/passwd')).rejects.toThrow('non valido')
     await expect(f.svc.rawDiff('a.md', '--output=/tmp/x')).rejects.toThrow('sinceChecksum')
@@ -109,7 +109,7 @@ describe('rawDiff', () => {
   })
 
   it('nomi con caratteri glob sono trattati come letterali', async () => {
-    const f = await init({ 'a*.md': 'uno\n', 'ab.md': 'altro\n' })
+    const f = init({ 'a*.md': 'uno\n', 'ab.md': 'altro\n' })
     fs.writeFileSync(path.join(f.rawDir, 'a*.md'), 'uno\ndue\n')
     const r = await f.svc.rawDiff('a*.md')
     expect(r.status === 'diff' && r.diff).toContain('+due')
@@ -146,7 +146,7 @@ describe('rawDiff su PDF', () => {
   it.skipIf(!hasPdftotext)(
     'con *.pdf diff=pdf in .gitattributes mostra il diff del testo estratto',
     async () => {
-      const f = await init({ 'x.md': 'x' })
+      const f = init({ 'x.md': 'x' })
       fs.writeFileSync(path.join(f.root, '.gitattributes'), '*.pdf diff=pdf\n')
       const v1 = minimalPdf('versione prima')
       fs.writeFileSync(path.join(f.rawDir, 'doc.pdf'), v1)
@@ -162,7 +162,7 @@ describe('rawDiff su PDF', () => {
   )
 
   it('senza la mappatura in .gitattributes un PDF modificato resta binary', async () => {
-    const f = await init({ 'x.md': 'x' })
+    const f = init({ 'x.md': 'x' })
     const v1 = minimalPdf('prima')
     fs.writeFileSync(path.join(f.rawDir, 'doc.pdf'), v1)
     commitAll(f, 'pdf v1')
