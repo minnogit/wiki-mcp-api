@@ -6,11 +6,12 @@
   "type": "module",
   "bin": "dist/stdio.js",
   "scripts": {
-    "build": "tsup src/stdio.ts src/http.ts --format esm --no-splitting --dts && node -e \"const fs=require('fs');const f='dist/stdio.js';fs.writeFileSync(f,'#!/usr/bin/env node\\n'+fs.readFileSync(f,'utf8'));\" && chmod +x dist/stdio.js",
+    "build": "tsup src/stdio.ts src/http.ts src/cli/token.ts --format esm --no-splitting --dts && node -e \"const fs=require('fs');const f='dist/stdio.js';fs.writeFileSync(f,'#!/usr/bin/env node\\n'+fs.readFileSync(f,'utf8'));\" && chmod +x dist/stdio.js",
     "start": "node dist/stdio.js",
     "start:http": "node dist/http.js",
     "dev": "tsx src/stdio.ts",
     "dev:http": "tsx src/http.ts",
+    "token": "tsx src/cli/token.ts",
     "test": "vitest run",
     "lint": "eslint src tests && tsc -p tsconfig.check.json",
     "format": "prettier --write src tests",

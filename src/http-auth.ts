@@ -1,5 +1,6 @@
 import { createHash, timingSafeEqual } from 'node:crypto'
 import type http from 'node:http'
+import { canAccessWiki, createAuthenticator, type Authenticator, type Principal } from './auth.js'
 
 export const HEALTH_PATH = '/healthz'
 export const MCP_PATH = '/mcp'
@@ -17,10 +18,16 @@ export function safeEqual(a: string, b: string): boolean {
   return timingSafeEqual(sha256(a), sha256(b))
 }
 
-export function isAuthorized(req: http.IncomingMessage, token: string): boolean {
+/** Il token dell'header `Authorization: Bearer <token>`, se c'è. */
+export function bearerToken(req: http.IncomingMessage): string | undefined {
   const header = req.headers.authorization ?? ''
   const [scheme, value] = header.split(' ')
-  return scheme === 'Bearer' && value !== undefined && safeEqual(value, token)
+  return scheme === 'Bearer' && value !== undefined ? value : undefined
+}
+
+export function isAuthorized(req: http.IncomingMessage, token: string): boolean {
+  const value = bearerToken(req)
+  return value !== undefined && safeEqual(value, token)
 }
 
 export interface RateLimitOptions {
@@ -91,16 +98,26 @@ export function rateLimitFromEnv(env: NodeJS.ProcessEnv = process.env): RateLimi
 }
 
 export interface RequestHandlerOptions {
-  token: string
+  /** Verifica dei token e identità (vedi `createAuthFromEnv`). */
+  auth?: Authenticator
+  /**
+   * Scorciatoia per il solo token unico: equivale a un autenticatore con la sola credenziale
+   * legacy (principal `legacy`, tutte le wiki). Se c'è `auth`, `token` è ignorato.
+   */
+  token?: string
   limiter: FailureRateLimiter
   /** Nomi delle wiki servite (già validati all'avvio). */
   wikis: readonly string[]
-  /** Gestore delle richieste MCP autenticate, già risolte su una wiki esistente. */
+  /**
+   * Gestore delle richieste MCP autenticate, già risolte su una wiki esistente e abilitata per
+   * il principal. Chi lo implementa deve eseguire il server MCP dentro `runWithPrincipal`.
+   */
   mcp: (
     wiki: string,
     url: URL,
     req: http.IncomingMessage,
     res: http.ServerResponse,
+    principal: Principal,
   ) => Promise<void>
 }
 
@@ -121,7 +138,14 @@ function notFound(res: http.ServerResponse): void {
 }
 
 export function createRequestHandler(options: RequestHandlerOptions) {
-  const { token, limiter, wikis, mcp } = options
+  const { limiter, wikis, mcp } = options
+  const auth =
+    options.auth ??
+    (options.token
+      ? createAuthenticator({ legacyToken: options.token })
+      : (() => {
+          throw new Error('createRequestHandler: serve `auth` o `token`')
+        })())
 
   return async (req: http.IncomingMessage, res: http.ServerResponse): Promise<void> => {
     const url = new URL(req.url ?? '', `http://${req.headers.host ?? 'localhost'}`)
@@ -150,7 +174,10 @@ export function createRequestHandler(options: RequestHandlerOptions) {
       return
     }
 
-    if (!isAuthorized(req, token)) {
+    // Token sconosciuto, revocato o scaduto: stessa 401 e stesso conteggio nel rate limit.
+    const presented = bearerToken(req)
+    const principal = presented === undefined ? undefined : auth.authenticate(presented)
+    if (!principal) {
       limiter.recordFailure(ip)
       res
         .writeHead(401, { 'Content-Type': 'application/json' })
@@ -162,19 +189,21 @@ export function createRequestHandler(options: RequestHandlerOptions) {
     // non deve poter distinguere un nome esistente da uno inesistente (stessa 401 per tutti), né
     // scoprire se il server è configurato con una o più wiki. `/mcp` senza nome è un alias
     // valido solo con una wiki sola; con più wiki l'endpoint va scelto, e il messaggio non li elenca.
+    // Una wiki non abilitata per questo principal è trattata come inesistente: stessa 404, stesso
+    // corpo, così un token valido non può sondare l'esistenza di wiki che non gli sono assegnate.
     let wiki: string | undefined
     if (route.kind === 'alias') {
       if (wikis.length === 1) wiki = wikis[0]
     } else if (wikis.includes(route.name)) {
       wiki = route.name
     }
-    if (wiki === undefined) {
+    if (wiki === undefined || !canAccessWiki(principal, wiki)) {
       notFound(res)
       return
     }
 
     try {
-      await mcp(wiki, url, req, res)
+      await mcp(wiki, url, req, res, principal)
     } catch (error) {
       console.error('Errore gestione richiesta MCP HTTP:', error)
       if (!res.headersSent) {

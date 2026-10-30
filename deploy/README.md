@@ -88,7 +88,9 @@ WIKI_SSH_KEY=/etc/wiki-mcp/deploy_key
 `/etc/wiki-mcp/http.env` (server HTTP):
 
 ```bash
-MCP_HTTP_TOKEN=<openssl rand -hex 32>
+MCP_HTTP_TOKENS_FILE=/etc/wiki-mcp/tokens.json
+# in alternativa (o in aggiunta) al file, il token unico legacy:
+# MCP_HTTP_TOKEN=<openssl rand -hex 32>
 MCP_HTTP_HOST=127.0.0.1
 MCP_HTTP_PORT=3000
 WIKI_PATH=/var/lib/wiki-mcp/checkout/wiki
@@ -103,7 +105,27 @@ sudo chown root:wikimcp /etc/wiki-mcp/http.env && sudo chmod 640 /etc/wiki-mcp/h
 sudo chown root:wikisync /etc/wiki-mcp/sync.env && sudo chmod 640 /etc/wiki-mcp/sync.env
 ```
 
-Il token non va committato né messo nelle unit: sta solo in `http.env`.
+Il token unico, se lo usi, non va committato né messo nelle unit: sta solo in `http.env`.
+
+#### File dei token per utente
+
+Con `MCP_HTTP_TOKENS_FILE` ogni utente ha il suo token (vedi «Token per utente» nel README principale). Il file contiene solo hash, ma va comunque tenuto stretto:
+
+```bash
+cd /opt/wiki-mcp-api
+sudo touch /etc/wiki-mcp/tokens.json
+sudo chown root:wikimcp /etc/wiki-mcp/tokens.json && sudo chmod 640 /etc/wiki-mcp/tokens.json
+echo '[]' | sudo tee /etc/wiki-mcp/tokens.json >/dev/null
+sudo MCP_HTTP_TOKENS_FILE=/etc/wiki-mcp/tokens.json node dist/cli/token.js create --user alice --wikis hr
+sudo MCP_HTTP_TOKENS_FILE=/etc/wiki-mcp/tokens.json node dist/cli/token.js list
+sudo MCP_HTTP_TOKENS_FILE=/etc/wiki-mcp/tokens.json node dist/cli/token.js revoke <id>
+```
+
+- **Chi scrive e chi legge.** Il file lo modifica l'amministratore col CLI (root); il servizio, che gira come `wikimcp`, lo legge via gruppo (`root:wikimcp`, `0640`). Il CLI riscrive il file in modo atomico mantenendo modo e proprietario, quindi dopo un `revoke` fatto da root il servizio continua a poterlo leggere. Il servizio non scrive mai il file.
+- **Le unit non cambiano.** `/etc` è leggibile con `ProtectSystem=strict`, e non serve scrittura. Non serve riavviare: il servizio rilegge il file da solo (controllo ogni 2 secondi circa), una revoca vale subito dopo. Se il file diventa invalido, il servizio tiene l'ultima versione valida e lo scrive in `journalctl -u wiki-mcp-http.service`.
+- **Con Docker** monta il file in sola lettura nel servizio `mcp` (es. `- ./tokens.json:/etc/wiki-mcp/tokens.json:ro`) e imposta `MCP_HTTP_TOKENS_FILE`. Un bind mount di un singolo file dopo un `rename` atomico dell'host può continuare a mostrare il vecchio file: monta la **cartella** che lo contiene.
+- **Backup.** Includi `/etc/wiki-mcp/tokens.json` nei backup di configurazione: contiene gli hash, non i token, quindi un backup non dà accesso a nessuno, ma perderlo significa riemettere tutti i token. Non va nel repo della wiki.
+- Il token in chiaro viene stampato una sola volta da `create`: consegnalo a chi lo userà e non copiarlo in ticket o chat.
 
 ### 5. Unit e avvio
 
@@ -172,7 +194,7 @@ Il receiver verifica la firma HMAC SHA-256 (`X-Hub-Signature-256`, confronto a t
 ```bash
 cd deploy
 cp docker-compose.example.yml docker-compose.yml
-cp ../.env.example .env.mcp          # lascia solo MCP_HTTP_TOKEN e le variabili che ti servono
+cp ../.env.example .env.mcp          # lascia solo MCP_HTTP_TOKENS_FILE (o MCP_HTTP_TOKEN) e le variabili che ti servono
 # metti la deploy key in deploy/deploy_key (chmod 600, leggibile dall'uid 1000)
 docker compose up -d --build
 docker compose ps                    # lo stato di salute arriva da /healthz
@@ -196,11 +218,11 @@ Una sola istanza serve più wiki (`WIKI_CONFIG`, vedi README principale). Dal la
 ]
 ```
 
-Il reverse proxy non cambia (stessa porta). I client usano `https://wiki.example.com/mcp/<name>`. Il token è uno solo per tutte le wiki: non mettere sullo stesso server wiki con riservatezza diversa finché non esistono token per utente o gruppo. Il Dockerfile resta com'è: `WIKI_PATH`/`RAW_PATH` impostate nell'immagine vengono semplicemente ignorate quando `WIKI_CONFIG` è presente.
+Il reverse proxy non cambia (stessa porta). I client usano `https://wiki.example.com/mcp/<name>`. Con i token per utente (`MCP_HTTP_TOKENS_FILE`) ogni token vede solo le wiki che gli sono abilitate; il token unico legacy vale per tutte, quindi con wiki a riservatezza diversa non usarlo. Il Dockerfile resta com'è: `WIKI_PATH`/`RAW_PATH` impostate nell'immagine vengono semplicemente ignorate quando `WIKI_CONFIG` è presente.
 
 ## Collegare un client MCP remoto
 
-Il server parla MCP su HTTP e richiede `Authorization: Bearer <MCP_HTTP_TOKEN>` su ogni richiesta, all'URL `https://wiki.example.com/mcp/<name>`. Con una sola wiki configurata (anche senza `WIKI_CONFIG`, dove si chiama `default`) vale anche l'alias `https://wiki.example.com/mcp`; con più wiki l'alias risponde 404. Gli esempi di configurazione del client qui sotto usano l'alias.
+Il server parla MCP su HTTP e richiede `Authorization: Bearer <token>` (il proprio token, o il legacy `MCP_HTTP_TOKEN`) su ogni richiesta, all'URL `https://wiki.example.com/mcp/<name>`. Con una sola wiki configurata (anche senza `WIKI_CONFIG`, dove si chiama `default`) vale anche l'alias `https://wiki.example.com/mcp`; con più wiki l'alias risponde 404. Gli esempi di configurazione del client qui sotto usano l'alias.
 
 Claude Code:
 
@@ -256,7 +278,9 @@ Per confrontare il checkout con il remoto: `git -C /var/lib/wiki-mcp/checkout re
 | `il checkout ... non esiste e WIKI_REPO_URL non è impostato` | manca `WIKI_REPO_URL` in `sync.env`. |
 | `git fetch fallito ... branch inesistente` | `WIKI_BRANCH` non esiste nel remoto. |
 | `lock ... non ottenuto` | un'altra sincronizzazione è bloccata (rete lenta?). Cerca `git` in esecuzione con `ps`; il lock si libera da solo quando il processo termina. |
-| `wiki-mcp-http` esce subito con `MCP_HTTP_TOKEN non impostato` | `http.env` mancante o non leggibile da `wikimcp`. |
+| `wiki-mcp-http` esce subito con `Nessuna credenziale configurata` | né `MCP_HTTP_TOKENS_FILE` né `MCP_HTTP_TOKEN` in `http.env` (mancante o non leggibile da `wikimcp`). |
+| `wiki-mcp-http` esce con `File dei token non valido` | il file ha un errore (JSON, campo sconosciuto, wiki inesistente in `WIKI_CONFIG`): l'errore indica la voce. A runtime lo stesso errore non ferma il servizio, che tiene l'ultima versione valida. |
+| Un utente riceve `404` con il token giusto | la wiki non è tra le sue `wikis` (è voluto: è indistinguibile da una wiki inesistente). `list` mostra cosa è abilitato. |
 | Il server parte ma le pagine non ci sono | `WIKI_PATH` non punta a `<checkout>/wiki`, oppure la prima sincronizzazione non è mai riuscita. |
 | `404` con il token giusto | con più wiki `/mcp` senza nome non esiste, e un nome non presente in `wikis.json` è sconosciuto: usa `/mcp/<name>`. |
 | `wiki-mcp-http` esce subito con `WIKI_CONFIG non valido` | l'errore elenca la voce sbagliata (nome non valido o duplicato, campo sconosciuto, fuso inesistente). |
