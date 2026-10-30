@@ -5,7 +5,9 @@ import * as os from 'node:os'
 import * as path from 'node:path'
 import type { MCPServer } from '@mastra/mcp'
 import { afterEach, describe, expect, it } from 'vitest'
+import { createAuthenticator, hashToken } from '../src/auth.js'
 import { FailureRateLimiter, createRequestHandler } from '../src/http-auth.js'
+import { parseTokenFile } from '../src/token-file.js'
 import { buildRemoteServer } from '../src/server.js'
 import { frontmatter, makeService, writeTree } from './helpers'
 
@@ -227,5 +229,116 @@ describe('end-to-end con MCPServer reali', () => {
     const base = await startReal(new Map([['solo', makeWiki('solo', 'Pagina Solo')]]))
     expect(await readTitle(base, '/mcp')).toContain('Pagina Solo')
     expect(await readTitle(base, '/mcp/solo')).toContain('Pagina Solo')
+  })
+})
+
+// Token per utente: ogni principal vede solo le wiki che gli sono abilitate.
+describe('routing con token per utente', () => {
+  const ALICE = { Authorization: 'Bearer tok-alice' }
+  const OLD = { Authorization: 'Bearer tok-old' }
+
+  async function startUsers(now = () => Date.parse('2026-01-01')) {
+    const entries = parseTokenFile([
+      { id: 'alice', user: 'alice', wikis: ['hr'], tokenHash: hashToken('tok-alice') },
+      { id: 'root', user: 'root', wikis: '*', tokenHash: hashToken('tok-root') },
+      {
+        id: 'old',
+        user: 'old',
+        wikis: '*',
+        tokenHash: hashToken('tok-old'),
+        expiresAt: '2020-01-01T00:00:00Z',
+      },
+    ])
+    const seen: string[] = []
+    const handler = createRequestHandler({
+      auth: createAuthenticator({ entries: () => entries, now }),
+      limiter: new FailureRateLimiter({ maxFailures: 100, windowMs: 60_000 }),
+      wikis: ['hr', 'it'],
+      mcp: (wiki, _u, _r, res, principal) => {
+        seen.push(`${principal.id}@${wiki}`)
+        res.writeHead(200).end(wiki)
+        return Promise.resolve()
+      },
+    })
+    httpServer = http.createServer((req, res) => void handler(req, res))
+    await new Promise<void>((resolve) => httpServer!.listen(0, '127.0.0.1', resolve))
+    return { base: `http://127.0.0.1:${(httpServer.address() as AddressInfo).port}`, seen }
+  }
+
+  it('il principal arriva al gestore MCP insieme alla wiki', async () => {
+    const { base, seen } = await startUsers()
+    expect((await fetch(`${base}/mcp/hr`, { headers: ALICE })).status).toBe(200)
+    const root = { Authorization: 'Bearer tok-root' }
+    expect((await fetch(`${base}/mcp/it`, { headers: root })).status).toBe(200)
+    expect(seen).toEqual(['alice@hr', 'root@it'])
+  })
+
+  it('wiki non abilitata: 404 identico a wiki inesistente (stato, corpo, header)', async () => {
+    const { base, seen } = await startUsers()
+    const notEnabled = await fetch(`${base}/mcp/it`, { headers: ALICE })
+    const missing = await fetch(`${base}/mcp/fantasma`, { headers: ALICE })
+    expect(notEnabled.status).toBe(404)
+    expect(missing.status).toBe(404)
+    expect(await notEnabled.text()).toBe(await missing.text())
+    const headers = (r: Response) =>
+      [...r.headers].filter(([k]) => k !== 'date').sort(([a], [b]) => a.localeCompare(b))
+    expect(headers(notEnabled)).toEqual(headers(missing))
+    expect(seen).toEqual([])
+  })
+
+  it('token scaduto: 401 come uno sconosciuto', async () => {
+    const { base, seen } = await startUsers()
+    const expired = await fetch(`${base}/mcp/hr`, { headers: OLD })
+    const unknown = await fetch(`${base}/mcp/hr`, { headers: { Authorization: 'Bearer boh' } })
+    expect(expired.status).toBe(401)
+    expect(await expired.text()).toBe(await unknown.text())
+    expect(seen).toEqual([])
+  })
+
+  it('un token scaduto conta come fallimento nel rate limit', async () => {
+    const entries = parseTokenFile([
+      {
+        id: 'old',
+        user: 'old',
+        wikis: '*',
+        tokenHash: hashToken('tok-old'),
+        expiresAt: '2020-01-01T00:00:00Z',
+      },
+    ])
+    const handler = createRequestHandler({
+      auth: createAuthenticator({ entries: () => entries }),
+      limiter: new FailureRateLimiter({ maxFailures: 1, windowMs: 60_000 }),
+      wikis: ['hr'],
+      mcp: (_w, _u, _r, res) => {
+        res.writeHead(200).end()
+        return Promise.resolve()
+      },
+    })
+    httpServer = http.createServer((req, res) => void handler(req, res))
+    await new Promise<void>((resolve) => httpServer!.listen(0, '127.0.0.1', resolve))
+    const base = `http://127.0.0.1:${(httpServer.address() as AddressInfo).port}`
+    expect((await fetch(`${base}/mcp/hr`, { headers: OLD })).status).toBe(401)
+    expect((await fetch(`${base}/mcp/hr`, { headers: OLD })).status).toBe(429)
+  })
+
+  it('l alias /mcp con una wiki non abilitata al principal è 404', async () => {
+    const entries = parseTokenFile([
+      { id: 'a', user: 'a', wikis: ['altra'], tokenHash: hashToken('tok-a') },
+    ])
+    const handler = createRequestHandler({
+      auth: createAuthenticator({ entries: () => entries }),
+      limiter: new FailureRateLimiter({ maxFailures: 100, windowMs: 60_000 }),
+      wikis: ['solo'],
+      mcp: (_w, _u, _r, res) => {
+        res.writeHead(200).end()
+        return Promise.resolve()
+      },
+    })
+    httpServer = http.createServer((req, res) => void handler(req, res))
+    await new Promise<void>((resolve) => httpServer!.listen(0, '127.0.0.1', resolve))
+    const base = `http://127.0.0.1:${(httpServer.address() as AddressInfo).port}`
+    expect(
+      (await fetch(`${base}/mcp`, { headers: { Authorization: 'Bearer tok-a' } })).status,
+    ).toBe(404)
   })
 })

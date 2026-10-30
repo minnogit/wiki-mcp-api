@@ -156,7 +156,8 @@ Configura in `.env`:
 - `MCP_HTTP_PORT` — porta di ascolto (default `3000`)
 - `MCP_HTTP_HOST` — indirizzo di ascolto (default `127.0.0.1`, solo loopback). Per raggiungere il server da un'altra macchina o da fuori da un container imposta `0.0.0.0` (o l'IP di una specifica interfaccia), preferibilmente dietro un reverse proxy con TLS. Il log di avvio riporta l'indirizzo effettivo.
 - `MCP_HTTP_RATE_LIMIT_MAX` / `MCP_HTTP_RATE_LIMIT_WINDOW_SECONDS` — rate limit per IP sulle richieste con token errato o mancante: superati `MCP_HTTP_RATE_LIMIT_MAX` fallimenti (default `10`) nella finestra (default `60` secondi) il server risponde `429` con `Retry-After`, anche se la richiesta successiva avesse il token giusto, finché la finestra non scade. Il contatore è in memoria e per IP del peer: dietro un reverse proxy tutti i client risultano lo stesso IP (`X-Forwarded-For` non viene considerato), quindi conviene limitare anche sul proxy.
-- `MCP_HTTP_TOKEN` — token Bearer richiesto per autenticare le richieste, unico per tutte le wiki; il processo si rifiuta di avviarsi se assente. Genera un valore casuale, es. `openssl rand -hex 32`.
+- `MCP_HTTP_TOKENS_FILE` — file JSON dei token per utente (hash, gruppi, wiki abilitate), ricaricato da solo quando cambia: vedi «Token per utente» sotto.
+- `MCP_HTTP_TOKEN` — token Bearer unico («legacy»), valido per tutte le wiki. Si può usare da solo o insieme al file dei token. Il processo si rifiuta di avviarsi se non c'è né questo né `MCP_HTTP_TOKENS_FILE`. Genera un valore casuale, es. `openssl rand -hex 32`.
 - `MCP_HTTP_EXPOSE_RAW` — se vale esattamente `true` monta in HTTP anche i tool sulle sorgenti, per le wiki che hanno una cartella raw (default: non montati). All'avvio il server dice se sono esposti.
 
 Avvio:
@@ -166,9 +167,81 @@ npm run dev:http     # sviluppo (tsx)
 npm run build && npm run start:http   # produzione
 ```
 
-Il server ascolta su `http://<host>:<porta>/mcp/<name>` (una wiki per endpoint, vedi «Più wiki») e richiede l'header `Authorization: Bearer <MCP_HTTP_TOKEN>` su ogni richiesta (confronto a tempo costante). `/mcp` senza nome è un alias di retrocompatibilità, valido solo se è configurata **una sola** wiki (come senza `WIKI_CONFIG`, dove la wiki si chiama `default`); con più wiki risponde `404`. Un nome sconosciuto risponde `404`. Il controllo del token viene prima del routing: senza token valido si riceve sempre `401`, così non si può scoprire quali wiki esistono, né se ce n'è più d'una. I server MCP (uno per wiki) sono creati una volta all'avvio.
+Il server ascolta su `http://<host>:<porta>/mcp/<name>` (una wiki per endpoint, vedi «Più wiki») e richiede l'header `Authorization: Bearer <token>` su ogni richiesta (confronto a tempo costante). `/mcp` senza nome è un alias di retrocompatibilità, valido solo se è configurata **una sola** wiki (come senza `WIKI_CONFIG`, dove la wiki si chiama `default`); con più wiki risponde `404`. Un nome sconosciuto risponde `404`. Il controllo del token viene prima del routing: senza token valido si riceve sempre `401`, così non si può scoprire quali wiki esistono, né se ce n'è più d'una. I server MCP (uno per wiki) sono creati una volta all'avvio.
 
-**Limite attuale:** il token è uno solo (`MCP_HTTP_TOKEN`) e vale per tutte le wiki: chi lo possiede può leggere ogni wiki configurata. Con più wiki non c'è separazione per token o per gruppo; arriverà con i token per utente. Finché non c'è, non mettere nella stessa istanza wiki con riservatezza diversa.
+### Token per utente
+
+Ogni persona (o servizio) ha il proprio token, con i gruppi a cui appartiene e le wiki che può leggere. Un token si revoca da solo, senza ruotare gli altri. Si gestiscono con il CLI, che scrive il file indicato da `MCP_HTTP_TOKENS_FILE`:
+
+```bash
+export MCP_HTTP_TOKENS_FILE=/percorso/tokens.json    # oppure --file <percorso> a ogni comando
+
+# crea un token: viene stampato UNA sola volta su stdout, nel file finisce solo l'hash
+npm run token -- create --user alice --wikis hr --groups hr,editor --expires 2027-01-01T00:00:00Z --note "portatile di Alice"
+npm run token -- create --user ci-bot --wikis '*' --id ci-bot       # "*" = tutte le wiki
+
+npm run token -- list              # id, utente, gruppi, wiki, scadenza (mai gli hash)
+npm run token -- revoke alice-3f9a # per id (vedi list)
+```
+
+In produzione, dopo `npm run build`, lo stesso CLI è `node dist/cli/token.js <comando>`.
+
+`create` genera `wmcp_` + 32 byte casuali in esadecimale, crea il file con permessi `0600` se manca e lo riscrive in modo atomico (file temporaneo + rename). Se `--id` non è dato, ne genera uno dal nome utente. Il token va consegnato a chi lo userà (`Authorization: Bearer wmcp_...`): se si perde, non si recupera, se ne crea un altro.
+
+Il file è una lista JSON validata all'avvio (campi sconosciuti rifiutati):
+
+| Campo | Obbligatorio | Significato |
+| --- | --- | --- |
+| `id` | sì | identificatore univoco della credenziale (`[A-Za-z0-9._-]`, `legacy` è riservato) |
+| `user` | sì | a chi appartiene |
+| `groups` | no | gruppi dell'utente (usati dai permessi per pagina, in arrivo) |
+| `wikis` | sì | lista di nomi di wiki esistenti in `WIKI_CONFIG`, oppure `"*"` |
+| `tokenHash` | sì | `sha256:<64 cifre esadecimali>` del token completo. Mai il token in chiaro |
+| `expiresAt` | no | data ISO; dopo questa data il token è rifiutato (401) |
+| `note` | no | testo libero |
+
+Esempio: due utenti su due wiki. `wikis.json`:
+
+```json
+[
+  { "name": "hr", "wikiPath": "hr/wiki" },
+  { "name": "it", "wikiPath": "it/wiki" }
+]
+```
+
+`tokens.json` (gli hash sono quelli di due token fittizi):
+
+```json
+[
+  {
+    "id": "alice-3f9a",
+    "user": "alice",
+    "groups": ["hr"],
+    "wikis": ["hr"],
+    "tokenHash": "sha256:9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+    "expiresAt": "2027-01-01T00:00:00Z",
+    "note": "portatile di Alice"
+  },
+  {
+    "id": "bruno-7c21",
+    "user": "bruno",
+    "groups": ["it", "admin"],
+    "wikis": "*",
+    "tokenHash": "sha256:60303ae22b998861bce3b28f33eec1be758a213c86c93c076dbe9f558c11c752"
+  }
+]
+```
+
+Con questa configurazione Alice raggiunge solo `/mcp/hr`; Bruno entrambe.
+
+Comportamento:
+
+- **Wiki non abilitata = wiki inesistente.** Un token valido su `/mcp/it` senza averla abilitata riceve lo stesso `404` (stesso corpo, stessi header) di un nome che non esiste: non si scopre quali wiki ci sono oltre alle proprie. Token sconosciuto, revocato o scaduto: `401`, e conta nel rate limit come prima.
+- **Ricarica a caldo.** Il server controlla il file (inode, dimensione, mtime: `stat`, al massimo ogni 2 secondi) e lo rilegge quando cambia, quindi una revoca vale entro pochi secondi, senza riavvio. Se il file diventa invalido (JSON rotto, refuso, wiki inesistente) o sparisce, il server **tiene l'ultima versione valida** e scrive l'errore nel log: un refuso non chiude tutti, e non apre mai nulla. All'avvio, invece, un file invalido o mancante è un errore e il processo non parte.
+- **Token legacy.** `MCP_HTTP_TOKEN` continua a funzionare, da solo o insieme al file: identità `legacy`, tutte le wiki, nessun gruppo. Se è l'unica credenziale configurata, all'avvio il server stampa un avviso che consiglia i token per utente. Per revocare un'utenza basta toglierla dal file; per il token legacy bisogna cambiarlo (e riavviare).
+- **Identità nel codice.** Dentro i tool, `currentPrincipal()` (`src/auth.ts`) dà l'utente della richiesta; in stdio è `undefined` (locale, fiducia piena). Vedi CLAUDE.md.
+
+**Limiti.** Il token resta un segreto Bearer portato da chi lo usa: chi lo copia, lo è. Non c'è OAuth né SSO (si potranno innestare in seguito producendo lo stesso `Principal`). Le sessioni MCP non sono legate al token che le ha aperte (ogni richiesta è ri-autenticata col token che porta, quindi una revoca vale subito, ma un id di sessione noto non è un segreto separato). Per ora l'identità decide solo **quali wiki** si possono raggiungere; la separazione per pagina, l'audit e la scrittura remota arrivano in seguito. Nel file ci sono solo hash: un file trapelato non dà accesso, ma conviene tenerlo con permessi stretti comunque.
 
 `GET /healthz` non richiede autenticazione e risponde `200` con `{"status":"ok"}`, senza contenuti della wiki né versioni: serve agli healthcheck (Docker, load balancer). Non passa dal server MCP e non è soggetto al rate limit.
 
@@ -176,7 +249,7 @@ Per l'esposizione su internet (non solo rete privata/VPN) metti un reverse proxy
 
 Per far girare il server su una macchina Linux (systemd o Docker) e tenere la wiki aggiornata da git, con reverse proxy TLS e webhook opzionale, vedi [`deploy/README.md`](deploy/README.md).
 
-Un agente **remoto** configura l'endpoint HTTP (`/mcp/<name>`) con il token; un agente **locale** continua a usare solo la configurazione stdio (vedi sopra), che include già lettura e scrittura — non serve configurare entrambi i trasporti sulla stessa macchina.
+Un agente **remoto** configura l'endpoint HTTP (`/mcp/<name>`) con il proprio token; un agente **locale** continua a usare solo la configurazione stdio (vedi sopra), che include già lettura e scrittura — non serve configurare entrambi i trasporti sulla stessa macchina.
 
 ## Licenza
 
