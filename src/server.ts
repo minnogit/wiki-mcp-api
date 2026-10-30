@@ -1,6 +1,9 @@
 import { MCPServer } from '@mastra/mcp'
 import type { WikiService } from './wiki/service.js'
 import { DEFAULT_WIKI_NAME } from './config.js'
+import { auditTools, type ExecutableTool } from './audit.js'
+import { METRIC } from './metrics.js'
+import { telemetry as processTelemetry, type Telemetry } from './telemetry.js'
 import { wikiSearchTool } from './tools/search.js'
 import { wikiReadPageTool } from './tools/read-page.js'
 import { wikiListPagesTool } from './tools/list-pages.js'
@@ -107,8 +110,32 @@ function labels(svc: WikiService): { suffixId: string; suffixName: string } {
     : { suffixId: `-${name}`, suffixName: ` [${name}]` }
 }
 
+// Ogni tool registrato passa da `auditTools`: audit e metriche sono qui, in un punto solo, e i file
+// dei tool restano wrapper sottili. Il nome usato è la chiave dell'oggetto (il nome MCP).
+function audited<T extends Record<string, ExecutableTool>>(
+  svc: WikiService,
+  tools: T,
+  tel: Telemetry,
+): T {
+  return auditTools(tools, {
+    wiki: svc.context.name,
+    auditor: tel.auditor,
+    metrics: tel.metrics,
+    queryMaxChars: tel.queryMaxChars,
+  })
+}
+
+/** Espone il numero di pagine in cache come gauge `wiki_mcp_wiki_pages{wiki}`, calcolato allo scrape. */
+export function registerWikiGauge(svc: WikiService, tel: Telemetry = processTelemetry()): void {
+  tel.metrics.addGauge(
+    METRIC.wikiPages,
+    'Pagine della wiki (dalla cache del service)',
+    async () => [{ labels: { wiki: svc.context.name }, value: (await svc.getAllPages()).length }],
+  )
+}
+
 // Server completo (lettura + scrittura), esposto solo via stdio locale (src/stdio.ts).
-export function buildServer(svc: WikiService): MCPServer {
+export function buildServer(svc: WikiService, tel: Telemetry = processTelemetry()): MCPServer {
   const sources = svc.context.rawDir !== undefined
   const { suffixId, suffixName } = labels(svc)
   return new MCPServer({
@@ -117,11 +144,15 @@ export function buildServer(svc: WikiService): MCPServer {
     version: '0.1.0',
     description: 'Ponte MCP tra agenti AI e una wiki di dominio in markdown',
     instructions: buildInstructions(svc.context.domain, { sources }),
-    tools: {
-      ...wikiReadTools(svc),
-      ...(sources ? sourceTools(svc) : {}),
-      ...writeTools(svc),
-    },
+    tools: audited(
+      svc,
+      {
+        ...wikiReadTools(svc),
+        ...(sources ? sourceTools(svc) : {}),
+        ...writeTools(svc),
+      },
+      tel,
+    ),
   })
 }
 
@@ -131,7 +162,10 @@ export function buildServer(svc: WikiService): MCPServer {
 // sorgenti. `exposeRaw` è esplicito per i test; di default si legge l'ambiente.
 export function buildRemoteServer(
   svc: WikiService,
-  { exposeRaw = rawOverHttp() }: { exposeRaw?: boolean } = {},
+  {
+    exposeRaw = rawOverHttp(),
+    telemetry: tel = processTelemetry(),
+  }: { exposeRaw?: boolean; telemetry?: Telemetry } = {},
 ): MCPServer {
   const sources = exposeRaw && svc.context.rawDir !== undefined
   const { suffixId, suffixName } = labels(svc)
@@ -145,9 +179,13 @@ export function buildRemoteServer(
         ? 'Questa istanza è di sola lettura: wikiWritePage e wikiAppendLog non sono disponibili qui.'
         : 'Questa istanza è di sola lettura e serve solo le pagine della wiki: wikiWritePage, wikiAppendLog e i tool sulle sorgenti (wikiListRaw, wikiReadRaw, wikiRawDiff, wikiChecksum) non sono disponibili qui.'
     }`,
-    tools: {
-      ...wikiReadTools(svc),
-      ...(sources ? sourceTools(svc) : {}),
-    },
+    tools: audited(
+      svc,
+      {
+        ...wikiReadTools(svc),
+        ...(sources ? sourceTools(svc) : {}),
+      },
+      tel,
+    ),
   })
 }
