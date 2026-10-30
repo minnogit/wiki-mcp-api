@@ -224,6 +224,37 @@ Una sola istanza serve più wiki (`WIKI_CONFIG`, vedi README principale). Dal la
 
 Il reverse proxy non cambia (stessa porta). I client usano `https://wiki.example.com/mcp/<name>`. Con i token per utente (`MCP_HTTP_TOKENS_FILE`) ogni token vede solo le wiki che gli sono abilitate; il token unico legacy vale per tutte, quindi con wiki a riservatezza diversa non usarlo. Il Dockerfile resta com'è: `WIKI_PATH`/`RAW_PATH` impostate nell'immagine vengono semplicemente ignorate quando `WIKI_CONFIG` è presente.
 
+## Proposte di modifica da remoto (token GitHub)
+
+Se una wiki abilita `proposals` in `wikis.json` (vedi «Proposte di modifica da remoto» nel README principale), il server apre pull request sul repo della wiki. Serve un **token GitHub dedicato**, diverso dalla deploy key del sync: la deploy key resta di sola lettura e serve solo a `wiki-sync`; il token è un'altra credenziale, con un altro scopo, e va tenuta a parte.
+
+1. Crea un account (o una GitHub App) per il bot e un **fine-grained personal access token** limitato al solo repo della wiki, con **Contents: Read and write** e **Pull requests: Read and write**, e scadenza breve.
+2. Mettilo in `/etc/wiki-mcp/http.env`, con il nome indicato da `tokenEnv` (default `GITHUB_TOKEN`). Il file contiene ora un segreto di scrittura: permessi stretti, leggibile solo da root e dal gruppo del servizio.
+
+```bash
+# /etc/wiki-mcp/http.env
+GITHUB_TOKEN=github_pat_...
+```
+
+```bash
+sudo chown root:wikimcp /etc/wiki-mcp/http.env && sudo chmod 0600 /etc/wiki-mcp/http.env   # root lo legge comunque; systemd carica EnvironmentFile come root
+```
+
+   `EnvironmentFile=` lo legge systemd (come root) prima di avviare il processo come `wikimcp`: lo `0600` basta e il servizio non ha bisogno di leggere il file. Se invece usi `0640 root:wikimcp` per altre ragioni va bene, ma niente `others`. Non copiare il token in unit, nel `wikis.json` o nel repo. Con Docker passalo con `env_file` o un secret, non con `environment:` nel compose committato.
+3. Nel `wikis.json` indica `proposals.repo`, `baseBranch` (lo stesso seguito dal sync, `WIKI_BRANCH`) e `pathPrefix` (la cartella delle pagine dentro il repo: se `WIKI_PATH` è `<checkout>/wiki` è `wiki/`, che è il default). Poi `sudo systemctl restart wiki-mcp-http.service`: il log di avvio dice `wikiProposePage attivo` per ogni wiki abilitata. Se la variabile manca, il servizio non parte e l'errore la nomina.
+4. Dai il permesso ai singoli token: `node dist/cli/token.js create --user alice --wikis hr --propose hr`. Senza `--propose` nessuno può proporre.
+
+**Rotazione.** Crea il nuovo token su GitHub, sostituisci il valore in `http.env`, `sudo systemctl restart wiki-mcp-http.service` (la variabile si legge solo all'avvio; il riavvio non perde dati: le sessioni MCP si riaprono), poi revoca il vecchio token. Se il token è trapelato revocalo subito su GitHub: le proposte si fermano con l'errore «il server non riesce ad accedere al repository delle proposte», le PR già aperte restano. Controlla anche i branch `proposta/...` e le PR aperte dal bot.
+
+**Il merge e il sync.** Il tool non fa merge. La PR la unisce una persona; il timer (o il webhook) del sync porta poi `main` nel checkout, e solo allora la pagina è visibile da `wikiReadPage`. Il ritardo tra merge e visibilità è quello del sync: finché non è passato, un'altra proposta sulla stessa pagina nuova viene rifiutata come «percorso non consentito» (`not-synced` nell'audit).
+
+**Consigliato sul repo della wiki** (impostazioni GitHub, non del server):
+
+- *Branch protection* su `main`: PR obbligatoria con almeno una revisione approvata, nessun push diretto del bot (il bot scrive solo branch `proposta/...`). Senza protezione chiunque abbia scrittura sul repo può unire senza revisione.
+- Un file `CODEOWNERS` che assegni la revisione delle pagine riservate (e di `.github/`) a chi ne è responsabile, con «Require review from Code Owners». Il server controlla solo che il proponente possa scrivere la pagina: la sostanza la giudica chi rivede.
+- Una regola sui nomi dei branch o un'azione che chiuda le PR di proposta rimaste ferme da troppo tempo: il tetto `maxOpenPulls` si libera solo quando le PR vengono chiuse o unite.
+- La rete in uscita del server deve poter raggiungere `api.github.com` (o il tuo `apiUrl`) in HTTPS; l'unit systemd esistente lo consente (`AF_INET`/`AF_INET6`).
+
 ## Collegare un client MCP remoto
 
 Il server parla MCP su HTTP e richiede `Authorization: Bearer <token>` (il proprio token, o il legacy `MCP_HTTP_TOKEN`) su ogni richiesta, all'URL `https://wiki.example.com/mcp/<name>`. Con una sola wiki configurata (anche senza `WIKI_CONFIG`, dove si chiama `default`) vale anche l'alias `https://wiki.example.com/mcp`; con più wiki l'alias risponde 404. Gli esempi di configurazione del client qui sotto usano l'alias.
@@ -351,6 +382,8 @@ Per confrontare il checkout con il remoto: `git -C /var/lib/wiki-mcp/checkout re
 | `wiki-mcp-http` esce con `File dei token non valido` | il file ha un errore (JSON, campo sconosciuto, wiki inesistente in `WIKI_CONFIG`): l'errore indica la voce. A runtime lo stesso errore non ferma il servizio, che tiene l'ultima versione valida. |
 | Un utente riceve `404` con il token giusto | la wiki non è tra le sue `wikis` (è voluto: è indistinguibile da una wiki inesistente). `list` mostra cosa è abilitato. |
 | Il server parte ma le pagine non ci sono | `WIKI_PATH` non punta a `<checkout>/wiki`, oppure la prima sincronizzazione non è mai riuscita. |
+| `wiki-mcp-http` esce con «proposals è configurato ma la variabile d'ambiente ... manca» | manca `GITHUB_TOKEN` (o il nome in `tokenEnv`) in `http.env`, o il file non è letto dall'unit. |
+| `wikiProposePage` risponde «non riesce ad accedere al repository» | il token GitHub è scaduto, revocato o senza permessi Contents/Pull requests in scrittura sul repo; guarda `proposal-failed` nel journal (stato e tipo, mai il token). |
 | `404` con il token giusto | con più wiki `/mcp` senza nome non esiste, e un nome non presente in `wikis.json` è sconosciuto: usa `/mcp/<name>`. |
 | `wiki-mcp-http` esce subito con `WIKI_CONFIG non valido` | l'errore elenca la voce sbagliata (nome non valido o duplicato, campo sconosciuto, fuso inesistente). |
 | `401` anche con il token | token diverso da quello in `http.env`, o il proxy non inoltra l'header `Authorization`. |

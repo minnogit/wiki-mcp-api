@@ -11,8 +11,16 @@ import { rankPages, substringMatches, type RankedPage } from './search-index.js'
 import { getWikiSource, type WikiSource } from './freshness.js'
 import { currentPrincipal, type Principal } from '../auth.js'
 import { log } from '../log.js'
-import { markDenied } from '../audit.js'
-import { VISIBILITA, authorize, parseAccess, visibleTo, type Visibilita } from './access.js'
+import type { ProposalsConfig } from '../config.js'
+import { markDenied, type DeniedReason } from '../audit.js'
+import {
+  VISIBILITA,
+  authorize,
+  parseAccess,
+  visibleTo,
+  type AccessFields,
+  type Visibilita,
+} from './access.js'
 
 const execFileAsync = promisify(execFile)
 
@@ -58,6 +66,11 @@ export interface WikiContext {
   domain?: string
   /** fuso IANA con cui rendere le date derivate dall'mtime; assente = fuso del processo */
   tz?: string
+  /**
+   * Proposte di modifica da remoto (solo configurazione: il service non le usa). Senza, il tool
+   * `wikiProposePage` non è montato per questa wiki.
+   */
+  proposals?: ProposalsConfig
 }
 
 export interface PageFrontmatter {
@@ -224,6 +237,11 @@ async function parsePage(
 
 const RESERVED_ROOT_FILES = new Set(['index.md', 'log.md', 'sources.md', 'overview.md'])
 
+/** File riservati della radice (index, log, sources, overview): gestiti dal flusso di INGEST, non proponibili. */
+export function isReservedRootFile(relPath: string): boolean {
+  return path.dirname(relPath) === '.' && RESERVED_ROOT_FILES.has(path.basename(relPath))
+}
+
 // Permessi per pagina: campi opzionali, validati qui in scrittura. In lettura un valore sbagliato
 // non blocca nulla ma vale `riservata` (fail-closed, vedi access.ts).
 const ACCESS_SHAPE = {
@@ -259,7 +277,7 @@ const FRONTMATTER_SCHEMA = z.object({
  * riservati di radice sono esenti, ma se dichiarano `visibilita`/`gruppi` quei due campi sono
  * validati comunque: un refuso lì renderebbe il file invisibile (fail-closed) senza spiegazioni.
  */
-function validateFrontmatter(relPath: string, content: string): string[] {
+export function validateFrontmatter(relPath: string, content: string): string[] {
   const isReserved =
     path.dirname(relPath) === '.' && RESERVED_ROOT_FILES.has(path.basename(relPath))
   const { data } = matter(content)
@@ -275,6 +293,18 @@ function validateFrontmatter(relPath: string, content: string): string[] {
     ? [`gruppi ignorato: ha effetto solo con visibilita: riservata (in ${relPath})`]
     : []
 }
+
+/**
+ * Stato di una pagina rispetto a una proposta di modifica del principal corrente:
+ * - `missing`: il file non esiste nel clone servito (proposta di creazione);
+ * - `forbidden`: esiste ma il principal non può scriverla (o non è un file leggibile);
+ *   chi chiama deve rispondere come per un percorso non consentito, senza dire che esiste;
+ * - `existing`: esiste ed è scrivibile; `access` sono i suoi campi di accesso attuali.
+ */
+export type ProposalTarget =
+  | { kind: 'missing' }
+  | { kind: 'forbidden'; reason: DeniedReason }
+  | { kind: 'existing'; access: AccessFields }
 
 export interface RawFileInfo {
   filename: string
@@ -486,6 +516,30 @@ export function createWikiService(ctx: WikiContext, options: WikiServiceOptions 
     const warnings = validateFrontmatter(relPath, content)
     await withFileLock(full, () => fsp.writeFile(full, content, 'utf-8'))
     return warnings
+  }
+
+  // Stato di `relPath` per una proposta di modifica: serve a `src/proposals.ts` per decidere
+  // creazione/modifica e per i permessi. Non restituisce mai il contenuto, e per una pagina
+  // esistente ma non scrivibile dice solo `forbidden` (nessun dettaglio sulla pagina).
+  async function proposalTarget(relPath: string): Promise<ProposalTarget> {
+    const full = path.resolve(wikiDir, relPath)
+    if (!full.startsWith(wikiDir + path.sep))
+      return { kind: 'forbidden', reason: 'path-not-allowed' }
+    let page: Page
+    try {
+      page = await parsePageCached(relPath, full)
+    } catch (e) {
+      const code = (e as NodeJS.ErrnoException)?.code
+      if (isEnoent(e)) return { kind: 'missing' }
+      // una cartella, o altro che non è un file normale: non è una pagina su cui proporre
+      if (code === 'EISDIR' || code === 'ENOTDIR')
+        return { kind: 'forbidden', reason: 'path-not-allowed' }
+      throw e
+    }
+    const decision = authorize(page, principalNow(), 'write')
+    if (!decision.allowed) return { kind: 'forbidden', reason: decision.reason }
+    const { visibilita, gruppi, visibilitaNonValida } = page.frontmatter
+    return { kind: 'existing', access: { visibilita, gruppi, visibilitaNonValida } }
   }
 
   async function appendLog(entry: string): Promise<void> {
@@ -708,6 +762,7 @@ export function createWikiService(ctx: WikiContext, options: WikiServiceOptions 
     getPage,
     searchPages,
     writePage,
+    proposalTarget,
     appendLog,
     listRaw,
     readRaw,

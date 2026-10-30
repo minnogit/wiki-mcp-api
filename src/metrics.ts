@@ -21,6 +21,10 @@ export type AuthReason = (typeof AUTH_REASONS)[number]
 export const OUTCOMES = ['ok', 'error', 'denied'] as const
 export type Outcome = (typeof OUTCOMES)[number]
 
+/** Esiti di una proposta di modifica (`wiki_mcp_proposals_total`): PR aperta, rifiutata dalle regole, errore. */
+export const PROPOSAL_OUTCOMES = ['created', 'denied', 'error'] as const
+export type ProposalOutcome = (typeof PROPOSAL_OUTCOMES)[number]
+
 const DURATION_BUCKETS = [0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10]
 
 function escapeLabel(value: string): string {
@@ -137,4 +141,5 @@ export const METRIC = {
   authFailures: 'wiki_mcp_auth_failures_total',
   httpRequests: 'wiki_mcp_http_requests_total',
   wikiPages: 'wiki_mcp_wiki_pages',
+  proposals: 'wiki_mcp_proposals_total',
 } as const

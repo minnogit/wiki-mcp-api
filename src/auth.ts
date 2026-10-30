@@ -17,6 +17,11 @@ export interface Principal {
   readonly groups: readonly string[]
   /** Nomi delle wiki abilitate, oppure `'*'` per tutte. */
   readonly wikis: readonly string[] | '*'
+  /**
+   * Wiki per cui può proporre modifiche (`wikiProposePage`): permesso esplicito, indipendente da
+   * `wikis` (che dà la lettura). Vuoto = nessuna. Il token legacy non lo ha mai.
+   */
+  readonly propose: readonly string[] | '*'
 }
 
 /** Principal del token unico `MCP_HTTP_TOKEN`: accesso a tutte le wiki, nessun gruppo. */
@@ -25,6 +30,7 @@ export const LEGACY_PRINCIPAL: Principal = Object.freeze({
   user: 'legacy',
   groups: Object.freeze<string[]>([]),
   wikis: '*',
+  propose: Object.freeze<string[]>([]),
 })
 
 const storage = new AsyncLocalStorage<Principal>()
@@ -50,6 +56,14 @@ export function currentPrincipal(): Principal | undefined {
 /** La wiki `wiki` è tra quelle abilitate per il principal? */
 export function canAccessWiki(principal: Principal, wiki: string): boolean {
   return principal.wikis === '*' || principal.wikis.includes(wiki)
+}
+
+/** Il principal può proporre modifiche alla wiki `wiki`? Serve il permesso `propose` E l'accesso alla wiki. */
+export function canPropose(principal: Principal, wiki: string): boolean {
+  return (
+    canAccessWiki(principal, wiki) &&
+    (principal.propose === '*' || principal.propose.includes(wiki))
+  )
 }
 
 /** Esito di una verifica: il principal, oppure il motivo (solo per l'audit, mai per il client). */
@@ -79,6 +93,7 @@ function principalOf(entry: TokenEntry): Principal {
     user: entry.user,
     groups: Object.freeze([...(entry.groups ?? [])]),
     wikis: entry.wikis === '*' ? '*' : Object.freeze([...entry.wikis]),
+    propose: entry.propose === '*' ? '*' : Object.freeze([...(entry.propose ?? [])]),
   })
 }
 

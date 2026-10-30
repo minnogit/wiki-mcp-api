@@ -64,6 +64,7 @@ WIKI_CONFIG=/percorso/wikis.json
 | `rawPath` | no | cartella delle sorgenti. Se manca, i tool sulle sorgenti (`wikiListRaw`, `wikiReadRaw`, `wikiRawDiff`, `wikiChecksum`) non sono montati per quella wiki, in nessun trasporto, nemmeno con `MCP_HTTP_EXPOSE_RAW=true` |
 | `domain` | no | riga di dominio per le `instructions` (come `WIKI_DOMAIN`) |
 | `tz` | no | fuso IANA (come `WIKI_TZ`) |
+| `proposals` | no | abilita `wikiProposePage` su HTTP per questa wiki: proposte di modifica come pull request GitHub. Vedi «Proposte di modifica da remoto». Senza, il tool non esiste per quella wiki |
 
 I percorsi relativi sono risolti rispetto alla cartella del file di configurazione, non alla cartella da cui parte il processo. Il file è validato all'avvio: nome non valido, nome duplicato, campo sconosciuto o fuso inesistente fanno terminare il processo con un messaggio che indica la voce sbagliata.
 
@@ -147,7 +148,7 @@ Aggiungi il server in `opencode.json` (globale in `~/.config/opencode/opencode.j
 
 ## Accesso remoto (sola lettura)
 
-Oltre allo stdio locale, il progetto espone un secondo entrypoint (`src/http.ts`) pensato per l'accesso da remoto, di sola lettura e limitato per default alle pagine della wiki: monta `wikiSearch`, `wikiReadPage`, `wikiListPages`, `wikiGraph` e `wikiStatus`. `wikiWritePage` e `wikiAppendLog` restano disponibili **solo** via stdio locale: chi accede da remoto non può scrivere sulla wiki.
+Oltre allo stdio locale, il progetto espone un secondo entrypoint (`src/http.ts`) pensato per l'accesso da remoto, di sola lettura e limitato per default alle pagine della wiki: monta `wikiSearch`, `wikiReadPage`, `wikiListPages`, `wikiGraph` e `wikiStatus`. `wikiWritePage` e `wikiAppendLog` restano disponibili **solo** via stdio locale: chi accede da remoto non scrive mai sulla wiki servita. Può solo *proporre* modifiche, come pull request da rivedere, se la wiki lo abilita e il token ha il permesso (vedi «Proposte di modifica da remoto»).
 
 I tool sulle sorgenti (`wikiListRaw`, `wikiReadRaw`, `wikiRawDiff`, `wikiChecksum`) non sono montati in HTTP. Servono all'INGEST, che è un lavoro locale, e da remoto darebbero accesso a tutto ciò che sta in `RAW_PATH` e, con `wikiRawDiff`, alla sua storia git. `wikiChecksum` ne fa parte perché controlla anche `raw/`: senza i tool di lettura resterebbe un modo per sapere se un file esiste e qual è il suo hash. Se `RAW_PATH` contiene solo materiale che può leggere chiunque abbia il token, `MCP_HTTP_EXPOSE_RAW=true` li monta anche in HTTP.
 
@@ -241,7 +242,7 @@ Comportamento:
 - **Token legacy.** `MCP_HTTP_TOKEN` continua a funzionare, da solo o insieme al file: identità `legacy`, tutte le wiki, nessun gruppo. Se è l'unica credenziale configurata, all'avvio il server stampa un avviso che consiglia i token per utente. Per revocare un'utenza basta toglierla dal file; per il token legacy bisogna cambiarlo (e riavviare).
 - **Identità nel codice.** Dentro i tool, `currentPrincipal()` (`src/auth.ts`) dà l'utente della richiesta; in stdio è `undefined` (locale, fiducia piena). Vedi CLAUDE.md.
 
-**Limiti.** Il token resta un segreto Bearer portato da chi lo usa: chi lo copia, lo è. Non c'è OAuth né SSO (si potranno innestare in seguito producendo lo stesso `Principal`). Le sessioni MCP non sono legate al token che le ha aperte (ogni richiesta è ri-autenticata col token che porta, quindi una revoca vale subito, ma un id di sessione noto non è un segreto separato). L'identità decide **quali wiki** si possono raggiungere e, dentro una wiki, **quali pagine** si vedono (vedi «Permessi per pagina»); la scrittura remota arriva in seguito (l'audit di chi chiama cosa c'è già: vedi «Operatività»). Nel file ci sono solo hash: un file trapelato non dà accesso, ma conviene tenerlo con permessi stretti comunque.
+**Limiti.** Il token resta un segreto Bearer portato da chi lo usa: chi lo copia, lo è. Non c'è OAuth né SSO (si potranno innestare in seguito producendo lo stesso `Principal`). Le sessioni MCP non sono legate al token che le ha aperte (ogni richiesta è ri-autenticata col token che porta, quindi una revoca vale subito, ma un id di sessione noto non è un segreto separato). L'identità decide **quali wiki** si possono raggiungere e, dentro una wiki, **quali pagine** si vedono (vedi «Permessi per pagina»); il permesso di *proporre* modifiche è un campo a parte del token (`propose`, vedi «Proposte di modifica da remoto»); l'audit di chi chiama cosa è in «Operatività». Nel file ci sono solo hash: un file trapelato non dà accesso, ma conviene tenerlo con permessi stretti comunque.
 
 ### Permessi per pagina
 
@@ -301,6 +302,115 @@ Per far girare il server su una macchina Linux (systemd o Docker) e tenere la wi
 
 Un agente **remoto** configura l'endpoint HTTP (`/mcp/<name>`) con il proprio token; un agente **locale** continua a usare solo la configurazione stdio (vedi sopra), che include già lettura e scrittura — non serve configurare entrambi i trasporti sulla stessa macchina.
 
+## Proposte di modifica da remoto
+
+Un client remoto non scrive mai sulla wiki servita. Se la wiki lo abilita, può però **proporre** la creazione o la modifica di una pagina con il tool `wikiProposePage` (solo su HTTP, mai in stdio, dove c'è già `wikiWritePage`): il server crea su GitHub un branch con il file e apre una **pull request**. Il tool non fa mai merge.
+
+```text
+agente remoto ──wikiProposePage──▶ server MCP ──API GitHub──▶ branch proposta/... + PR
+                                                                   │  (revisione di una persona)
+wiki servita ◀── sync (deploy/sync-wiki.sh) ◀── merge su main ◀───┘
+```
+
+1. L'agente chiama `wikiProposePage` con `path`, `content` completo (frontmatter incluso), e opzionalmente `rationale` e `title`. Ottiene `{ prUrl, prNumber, branch, action }`, con `action` `create` o `update`.
+2. Il server verifica il permesso, il percorso, il contenuto e le regole sulla visibilità (sotto), poi apre la PR con il token GitHub del bot. Il commit è del bot; il messaggio riporta il trailer `Proposed-by: <utente> (<id del token>)` e lo stesso dato è nel corpo della PR.
+3. Una persona rivede la PR su GitHub e la unisce (o la chiude). Il server non lo fa e non ne ha il permesso.
+4. Il sync già descritto in [`deploy/README.md`](deploy/README.md) porta il merge nel checkout servito: solo a quel punto la pagina compare in `wikiReadPage`. Una proposta non è una modifica immediata, e il client deve dirlo all'utente (le `instructions` MCP lo spiegano).
+
+### Configurazione
+
+Campo `proposals` della voce della wiki in `WIKI_CONFIG` (validato con `.strict()`, errori all'avvio):
+
+```json
+[
+  {
+    "name": "hr",
+    "wikiPath": "/var/lib/wiki-mcp/checkout/wiki",
+    "proposals": {
+      "repo": "organizzazione/wiki-privata",
+      "baseBranch": "main",
+      "pathPrefix": "wiki/",
+      "tokenEnv": "GITHUB_TOKEN",
+      "labels": ["proposta-mcp"]
+    }
+  }
+]
+```
+
+| Campo | Default | Significato |
+| --- | --- | --- |
+| `repo` | (obbligatorio) | `proprietario/nome` del repository della wiki |
+| `baseBranch` | `main` | branch verso cui si apre la PR (quello che il sync segue) |
+| `pathPrefix` | `wiki/` | cartella delle pagine **dentro il repo** (`""` se stanno nella radice). Il path proposto, relativo alla wiki, ci si aggiunge davanti |
+| `tokenEnv` | `GITHUB_TOKEN` | **nome** della variabile d'ambiente che contiene il token GitHub. Il token non va mai nel file di configurazione |
+| `botName`, `botEmail` | `wiki-mcp-bot`, `wiki-mcp-bot@users.noreply.github.com` | identità di autore e committer dei commit |
+| `labels` | `[]` | etichette applicate alla PR (se l'applicazione fallisce la PR resta aperta e il server lo scrive nel log) |
+| `apiUrl` | `https://api.github.com` | per GitHub Enterprise (`https://ghe.example.com/api/v3`). `http` è ammesso solo verso localhost (finti server di prova) |
+| `maxContentChars` | `100000` | dimensione massima del contenuto proposto |
+| `maxRationaleChars` | `1000` | lunghezza massima della motivazione |
+| `maxOpenPulls` | `20` | tetto alle PR di proposta (branch `proposta/...`) aperte contemporaneamente: oltre, nuove proposte sono rifiutate finché non vengono riviste (conteggio sulle prime 100 PR aperte del repo) |
+| `rateLimitMax`, `rateLimitWindowSeconds` | `10`, `3600` | proposte per token (principal) nella finestra, in memoria, a finestra fissa |
+
+Una wiki **senza** `proposals` non monta il tool. Se `proposals` c'è ma la variabile indicata da `tokenEnv` manca o è vuota, il processo non parte (errore chiaro all'avvio, senza stampare valori). Lo stdio ignora `proposals`.
+
+### Permesso nel token: `propose`
+
+Il permesso è esplicito, per wiki, e indipendente dalla lettura:
+
+```bash
+npm run token -- create --user alice --wikis hr,it --propose hr --groups hr
+npm run token -- create --user bot --wikis '*' --propose '*'
+npm run token -- list      # colonna PROPONE
+```
+
+Nel file dei token è il campo `propose` (`["hr"]` oppure `"*"`). Assente o vuoto significa nessun permesso, quindi i file dei token esistenti non cambiano comportamento. Le wiki in `propose` devono esistere e, se `wikis` è un elenco, farne parte. **Il token legacy (`MCP_HTTP_TOKEN`) non ha mai il permesso di proporre.**
+
+### Token GitHub con permessi minimi
+
+Un account o una GitHub App dedicata al bot, e un **fine-grained personal access token** (Settings → Developer settings → Personal access tokens → Fine-grained tokens):
+
+- *Resource owner*: l'organizzazione (o l'utente) proprietaria del repo;
+- *Repository access*: **Only select repositories**, solo il repo della wiki;
+- *Repository permissions*: **Contents: Read and write** e **Pull requests: Read and write**; **Metadata: Read** è implicito. Nient'altro (niente Administration, Workflows, Actions, Issues);
+- una scadenza breve (90 giorni o meno) e un promemoria per ruotarlo (vedi `deploy/README.md`).
+
+Il token sta solo nell'ambiente del processo (`EnvironmentFile` con permessi `0600`), mai nel codice, nel file di configurazione, nell'audit o nei messaggi al client. Le etichette in `labels` vengono create da GitHub se non esistono, ma solo se il token può scrivere sulle issue/PR del repo: in caso contrario conviene crearle prima.
+
+### Controlli, nell'ordine
+
+1. **Permesso**: il principal esiste, ha accesso alla wiki e `propose` la include; altrimenti `denied` (`propose-not-allowed`). Poi il **rate limit** per token (`rate-limited`).
+2. **Percorso**: relativo alla wiki, solo `.md`, niente `..`, percorsi assoluti, backslash o caratteri di controllo, niente segmenti nascosti (`.qualcosa`), niente `index.md`/`log.md`/`sources.md`/`overview.md` nella radice (gestiti dall'INGEST), non una cartella (`path-not-allowed`).
+3. **Dimensione** del contenuto e della motivazione (`invalid-content`).
+4. **Frontmatter**: lo stesso `validateFrontmatter` di `wikiWritePage` (`tipo`, `tags`, `fonti`, `aggiornato`, `stato`, `visibilita`, `gruppi`); gli errori sono mostrati al proponente (`invalid-content`).
+5. **Pagina esistente** (nel checkout servito): serve `canWrite` per il principal, altrimenti `denied`. **Un non-admin non può cambiare `visibilita` o `gruppi` di una pagina esistente** (neppure abbassare una riservata di cui è membro): cambiare l'effetto di quei campi richiede `admin` (`visibility`).
+6. **Pagina nuova riservata**: il proponente deve appartenere a uno dei `gruppi` indicati, oppure essere `admin` (`visibility`).
+7. **Tetto alle PR aperte** (`open-prs-limit`) e confronto con il repo: se la pagina esiste già sul repo ma non nel checkout (sync in ritardo) la proposta è rifiutata (`not-synced`); un contenuto identico alla versione attuale non genera una PR vuota.
+
+Per una modifica il file esistente viene aggiornato con lo SHA del blob letto dal repo (concorrenza ottimistica): se cambia nel frattempo GitHub rifiuta e il client riceve «la pagina è cambiata, riproponi». Se un passo fallisce dopo la creazione del branch, il server prova a cancellarlo (best effort, scritto nel log; se la cancellazione stessa fallisce il branch `proposta/...` va tolto a mano).
+
+### Modello di minaccia e mitigazioni
+
+| Rischio | Mitigazione |
+| --- | --- |
+| Un client scrive sulla wiki senza revisione | Il tool non scrive sul checkout né fa merge; la modifica arriva solo dopo il merge di una persona. Consigliati branch protection e CODEOWNERS sul repo (`deploy/README.md`) |
+| Un token qualunque propone | Permesso `propose` esplicito per wiki, default vuoto; il legacy mai |
+| Proporre su pagine riservate, o aprirne l'accesso | `canWrite` sulla pagina esistente; `visibilita`/`gruppi` di una pagina esistente solo per `admin`; nuove riservate solo con un proprio gruppo |
+| Oracolo sull'esistenza delle pagine nascoste | Una pagina esistente ma non permessa riceve la stessa risposta di un percorso vietato («Percorso non consentito.»); solo l'audit sa il motivo. Vedi i residui sotto |
+| Injection nei messaggi: a-capo che aprono trailer (`Co-authored-by:`), `@menzioni` che notificano, `#123`/`closes #5` che toccano issue, HTML o immagini esterne nel corpo | Nome utente, id, titolo e motivazione sono ridotti a una riga o citati riga per riga; `@` e `#` seguiti da cifra ricevono un carattere a larghezza zero; `< > & [ ]` sono escapati; lunghezze massime |
+| Inondare il repo di PR | Rate limit per token, tetto alle PR aperte del bot, dimensione massima |
+| Il token GitHub trapela dal server | Solo in ambiente (`tokenEnv`), mai in file, log, audit o risposte; permessi fine-grained sul solo repo; i messaggi di errore al client sono frasi fisse per tipo, senza il corpo delle risposte di GitHub |
+| Contenuto malevolo nella pagina proposta | Resta una proposta: va letta in revisione come ogni altra modifica. La PR lo dice esplicitamente |
+
+### Limiti noti, da conoscere
+
+- **Oracolo residuo sull'esistenza.** Un proponente con `propose` può distinguere un percorso che non esiste (la proposta prosegue) da una pagina nascosta (negata con il messaggio generico), tentando proposte. Non si può chiudere senza aprire una PR di modifica su una pagina non permessa. Mitigazioni: il rate limit conta anche i rifiuti, ogni tentativo è nell'audit con `reason: visibility`, e il tetto alle PR aperte limita i tentativi andati a buon fine. Anche le differenze di tempo (lettura del file contro rifiuto immediato) non sono mascherate. Il caso «presente sul repo ma non ancora sul server» riceve lo stesso messaggio generico.
+- Il rate limit è **in memoria** e per processo: riparte da zero al riavvio e non è condiviso tra più istanze.
+- Il tetto alle PR aperte guarda le prime 100 PR aperte del repo (le più recenti): in un repo con molte PR di altri le proposte meno recenti potrebbero non essere contate. Non è una garanzia esatta: richieste concorrenti possono superarlo di poco.
+- Il merge, la revisione e la protezione dei branch dipendono da GitHub e dalle persone: il server non può imporle. Senza branch protection chi ha accesso in scrittura al repo può unire senza revisione.
+- Le PR si aprono dallo stesso repo (branch `proposta/...`), non da fork: il bot deve poter scrivere branch nel repo. Il token ha quindi accesso in scrittura ai contenuti: tenerlo come un segreto.
+- Non c'è: modifica o chiusura di una proposta dal client, elenco delle proprie proposte, proposte su `raw/`, `wikiAppendLog` da remoto (un `log.md` in remoto non è proponibile), aggiornamento di una PR già aperta, merge automatico, notifiche. Ogni nuova modifica è una nuova PR.
+- Il contenuto proposto è quello inviato dal client, per intero: non c'è un controllo di coerenza con la versione che il client ha letto, a parte l'SHA al momento della proposta.
+
 ## Operatività: log, audit e metriche
 
 Il server HTTP scrive su **stdout** un oggetto JSON per riga (journald e Docker lo raccolgono così com'è). Tre cose escono dallo stesso canale, distinte dal campo `event`: i log applicativi (`startup`, `route`, `config-warning`, `token-file-error`, `request-error`, `reload`, ...), l'**audit** di ogni chiamata a un tool (`event: "audit"`) e gli **accessi rifiutati** (`event: "auth"`).
@@ -334,7 +444,8 @@ Uno per ogni chiamata a un tool, di qualunque wiki. Lo produce un wrapper applic
 | `args` | solo campi non sensibili e corti (slug, path, filtri, `topK`); la query di `wikiSearch` troncata (`q`) con la lunghezza originale (`qLength`); per le scritture solo `path` e `contentLength`/`entryLength`, **mai il contenuto** |
 | `resultSize` | numero di elementi se il risultato è un elenco, altrimenti byte del risultato serializzato; assente in caso di errore |
 | `error` | solo con `error`: messaggio breve su una riga, senza stack né percorsi assoluti |
-| `reason` | solo con `denied`, da un vocabolario chiuso: `visibility` (pagina riservata, gruppo mancante) o `visibility-invalid` (valore di `visibilita` sconosciuto, trattato come riservata). Mai lo slug né i gruppi richiesti |
+| `reason` | solo con `denied`, da un vocabolario chiuso: `visibility` (pagina riservata, gruppo mancante; per le proposte anche tentativo di cambiare `visibilita`/`gruppi` senza essere admin), `visibility-invalid` (valore di `visibilita` sconosciuto, trattato come riservata) e, per `wikiProposePage`, `propose-not-allowed`, `path-not-allowed`, `invalid-content`, `rate-limited`, `open-prs-limit`, `not-synced`. Mai lo slug né i gruppi richiesti |
+| `action`, `prUrl`, `prNumber`, `branch` | solo per `wikiProposePage`: azione (`create`/`update`) e identificativi della PR aperta (o, in caso di errore a metà, del branch). Mai contenuto, titolo o motivazione: negli `args` ci sono solo `path` e le lunghezze (`contentLength`, `rationaleLength`, `titleLength`) |
 
 ### Evento `auth`
 
@@ -378,6 +489,7 @@ Formato testo Prometheus, senza dipendenze, attivo solo con `MCP_METRICS_TOKEN`:
 | `wiki_mcp_auth_failures_total` | `reason` | counter |
 | `wiki_mcp_http_requests_total` | `status` | counter (esclusa `/healthz`) |
 | `wiki_mcp_wiki_pages` | `wiki` | gauge, dalla cache del service |
+| `wiki_mcp_proposals_total` | `wiki`, `outcome` (`created`, `denied`, `error`) | counter, solo per le wiki con `proposals` |
 
 Le etichette vengono solo da insiemi chiusi (wiki configurate, tool registrati, motivi elencati sopra, codici di stato): mai utenti, slug o query. I contatori sono in memoria e ripartono da zero al riavvio, come vuole Prometheus.
 

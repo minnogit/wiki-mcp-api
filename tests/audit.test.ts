@@ -24,6 +24,7 @@ const alice: Principal = Object.freeze({
   user: 'alice',
   groups: [],
   wikis: ['test'],
+  propose: [],
 })
 
 type Exec = (input: unknown, ctx: unknown) => Promise<unknown>

@@ -529,6 +529,12 @@ fa l'utente manualmente.
 L'agente **non** modifica `CLAUDE.md` senza chiedere. Può proporre modifiche
 quando emergono pattern ricorrenti non coperti dallo schema.
 
+Un agente connesso da **remoto** (HTTP) non scrive mai in `wiki/`: se il server
+lo abilita, usa `wikiProposePage`, che apre una pull request da far rivedere a
+una persona. La pagina compare nella wiki solo dopo il merge e la
+sincronizzazione; all'utente si riporta l'URL della PR, non "ho modificato la
+pagina".
+
 ---
 
 ## 13. Quando chiedere all'utente

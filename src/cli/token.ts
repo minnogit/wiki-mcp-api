@@ -10,13 +10,15 @@ import { loadTokenFile, parseTokenFile, writeTokenFile, type TokenEntry } from '
 export const TOKEN_PREFIX = 'wmcp_'
 
 const USAGE = `Uso:
-  npm run token -- create --user <utente> --wikis <a,b|*> [--groups g1,g2]
+  npm run token -- create --user <utente> --wikis <a,b|*> [--groups g1,g2] [--propose <a,b|*>]
                           [--expires <data ISO>] [--id <id>] [--note <testo>] [--file <percorso>]
   npm run token -- list [--file <percorso>]
   npm run token -- revoke <id> [--file <percorso>]
 
 Il file è --file oppure MCP_HTTP_TOKENS_FILE. Il token in chiaro viene stampato una sola volta,
-da create: nel file resta solo l'hash.`
+da create: nel file resta solo l'hash.
+--propose abilita wikiProposePage (proposte di modifica come pull request) sulle wiki indicate:
+senza, il token non può proporre.`
 
 export interface CliIO {
   out: (text: string) => void
@@ -55,6 +57,7 @@ interface CreateValues {
   user?: string
   wikis?: string
   groups?: string
+  propose?: string
   expires?: string
   id?: string
   note?: string
@@ -67,12 +70,14 @@ function create(file: string, values: CreateValues, io: CliIO): void {
   const entries = readEntries(file)
   const groups = list(values.groups)
   const wikis = values.wikis.trim() === '*' ? '*' : list(values.wikis)
+  const propose = values.propose?.trim() === '*' ? '*' : list(values.propose)
   const token = generateToken()
   const entry: Record<string, unknown> = {
     id: values.id ?? defaultId(values.user, new Set(entries.map((e) => e.id))),
     user: values.user,
     ...(groups.length > 0 ? { groups } : {}),
     wikis,
+    ...(propose === '*' || propose.length > 0 ? { propose } : {}),
     tokenHash: `sha256:${createHash('sha256').update(token).digest('hex')}`,
     ...(values.expires ? { expiresAt: values.expires } : {}),
     ...(values.note ? { note: values.note } : {}),
@@ -99,10 +104,11 @@ function listCmd(file: string, io: CliIO): void {
     e.user,
     (e.groups ?? []).join(',') || '-',
     e.wikis === '*' ? '*' : e.wikis.join(','),
+    e.propose === '*' ? '*' : (e.propose ?? []).join(',') || '-',
     e.expiresAt ? `${e.expiresAt}${Date.parse(e.expiresAt) <= now ? ' (SCADUTO)' : ''}` : '-',
     e.note ?? '',
   ])
-  const header = ['ID', 'UTENTE', 'GRUPPI', 'WIKI', 'SCADENZA', 'NOTE']
+  const header = ['ID', 'UTENTE', 'GRUPPI', 'WIKI', 'PROPONE', 'SCADENZA', 'NOTE']
   const widths = header.map((h, i) => Math.max(h.length, ...rows.map((r) => r[i].length)))
   const fmt = (r: string[]) =>
     r
@@ -137,6 +143,7 @@ export function runCli(argv: string[], env: NodeJS.ProcessEnv, io: CliIO): numbe
         user: { type: 'string' },
         wikis: { type: 'string' },
         groups: { type: 'string' },
+        propose: { type: 'string' },
         expires: { type: 'string' },
         id: { type: 'string' },
         note: { type: 'string' },

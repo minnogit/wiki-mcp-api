@@ -79,6 +79,8 @@ export interface ToolCallRecord {
   error?: string
   /** Solo per `denied`: perché (es. regola o gruppo mancante). */
   reason?: string
+  /** Campi aggiuntivi sicuri (vedi `annotateAudit`). */
+  extra?: Record<string, unknown>
 }
 
 /** Registra un evento `audit` e aggiorna le metriche. Unico punto di uscita, per tutti gli esiti. */
@@ -95,6 +97,7 @@ export function recordToolCall(ctx: AuditContext, call: ToolCallRecord): void {
     call.durationMs / 1000,
   )
   ctx.auditor.record('audit', {
+    ...call.extra,
     requestId: currentRequestId() ?? randomUUID(),
     principal: principal ? { id: principal.id, user: principal.user } : LOCAL_PRINCIPAL,
     wiki: ctx.wiki,
@@ -128,8 +131,25 @@ export class DeniedError extends Error {
  * `reason` dell'evento: mai slug, gruppi o altro che un chiamante non debba conoscere.
  * - `visibility`: pagina esistente con `visibilita: riservata`, e il principal non ha il gruppo giusto.
  * - `visibility-invalid`: valore di `visibilita` sconosciuto (refuso), trattato come riservata.
+ * Proposte di modifica (`wikiProposePage`); `visibility` vale anche per un tentativo di cambiare
+ * `visibilita`/`gruppi` senza essere admin o di creare una riservata senza un proprio gruppo:
+ * - `propose-not-allowed`: il token non ha il permesso `propose` per questa wiki (o è il legacy).
+ * - `path-not-allowed`: percorso non valido, file riservato di radice, o cartella.
+ * - `invalid-content`: contenuto troppo grande, frontmatter non valido, nessuna differenza.
+ * - `rate-limited`: troppe proposte dello stesso principal nella finestra.
+ * - `open-prs-limit`: troppe PR di proposta già aperte sul repo.
+ * - `not-synced`: la pagina esiste sul repo ma non nel clone servito (sync in ritardo).
  */
-export const DENIED_REASONS = ['visibility', 'visibility-invalid'] as const
+export const DENIED_REASONS = [
+  'visibility',
+  'visibility-invalid',
+  'propose-not-allowed',
+  'path-not-allowed',
+  'invalid-content',
+  'rate-limited',
+  'open-prs-limit',
+  'not-synced',
+] as const
 export type DeniedReason = (typeof DENIED_REASONS)[number]
 
 // Stato della chiamata a un tool in corso, aperto da `withAudit`. Permette al service di dire
@@ -138,6 +158,7 @@ export type DeniedReason = (typeof DENIED_REASONS)[number]
 // solo nell'audit.
 interface CallState {
   denied?: DeniedReason
+  extra?: Record<string, unknown>
 }
 const callStates = new AsyncLocalStorage<CallState>()
 
@@ -149,6 +170,16 @@ const callStates = new AsyncLocalStorage<CallState>()
 export function markDenied(reason: DeniedReason): void {
   const state = callStates.getStore()
   if (state) state.denied ??= reason
+}
+
+/**
+ * Aggiunge campi all'evento `audit` della chiamata in corso (es. `prUrl`, `branch`, `action` di
+ * una proposta). Valgono le stesse regole degli `args`: identificatori e lunghezze, mai contenuti
+ * né segreti (il sanificatore gira comunque). No-op fuori da un tool avvolto da `withAudit`.
+ */
+export function annotateAudit(fields: Record<string, unknown>): void {
+  const state = callStates.getStore()
+  if (state) state.extra = { ...state.extra, ...fields }
 }
 
 /** Emette un evento `denied` per `tool` senza che la chiamata sia stata eseguita. */
@@ -203,6 +234,14 @@ const ARG_REDUCERS: Record<string, Reducer> = {
   // Scrittura: solo dove e quanto, MAI il contenuto.
   wikiWritePage: (i) => ({ path: str(i.path), contentLength: len(i.content) }),
   wikiAppendLog: (i) => ({ entryLength: len(i.entry) }),
+  // Proposta remota: solo dove e quanto. L'azione (create/update), prUrl e branch arrivano da
+  // `annotateAudit`. MAI contenuto o motivazione.
+  wikiProposePage: (i) => ({
+    path: str(i.path),
+    contentLength: len(i.content),
+    rationaleLength: len(i.rationale),
+    titleLength: len(i.title),
+  }),
 }
 
 /** Nomi dei tool con una regola di riduzione degli argomenti (per i test di copertura). */
@@ -278,13 +317,21 @@ export function withAudit<T extends ExecutableTool>(name: string, tool: T, ctx: 
           args,
           resultSize: sizeOf(result),
           reason: state.denied,
+          extra: state.extra,
         })
       } else {
         recordToolCall(
           ctx,
           error === undefined
-            ? { tool: name, outcome: 'ok', durationMs, args, resultSize: sizeOf(result) }
-            : { tool: name, outcome: 'error', durationMs, args, error },
+            ? {
+                tool: name,
+                outcome: 'ok',
+                durationMs,
+                args,
+                resultSize: sizeOf(result),
+                extra: state.extra,
+              }
+            : { tool: name, outcome: 'error', durationMs, args, error, extra: state.extra },
         )
       }
       return result
@@ -297,6 +344,7 @@ export function withAudit<T extends ExecutableTool>(name: string, tool: T, ctx: 
           durationMs,
           args,
           reason: sanitizeString(e.reason, 200),
+          extra: state.extra,
         })
       } else {
         recordToolCall(ctx, {
@@ -305,6 +353,7 @@ export function withAudit<T extends ExecutableTool>(name: string, tool: T, ctx: 
           durationMs,
           args,
           error: shortError(e),
+          extra: state.extra,
         })
       }
       throw e

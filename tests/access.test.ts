@@ -11,7 +11,7 @@ import {
   type AccessFields,
 } from '../src/wiki/access.js'
 
-const p = (groups: string[]): Principal => ({ id: 'x', user: 'x', groups, wikis: '*' })
+const p = (groups: string[]): Principal => ({ id: 'x', user: 'x', groups, wikis: '*', propose: [] })
 const rh = p(['hr'])
 const rest = p(['it'])
 const nessuno = p([])
