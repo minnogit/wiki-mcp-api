@@ -241,7 +241,7 @@ Comportamento:
 - **Token legacy.** `MCP_HTTP_TOKEN` continua a funzionare, da solo o insieme al file: identità `legacy`, tutte le wiki, nessun gruppo. Se è l'unica credenziale configurata, all'avvio il server stampa un avviso che consiglia i token per utente. Per revocare un'utenza basta toglierla dal file; per il token legacy bisogna cambiarlo (e riavviare).
 - **Identità nel codice.** Dentro i tool, `currentPrincipal()` (`src/auth.ts`) dà l'utente della richiesta; in stdio è `undefined` (locale, fiducia piena). Vedi CLAUDE.md.
 
-**Limiti.** Il token resta un segreto Bearer portato da chi lo usa: chi lo copia, lo è. Non c'è OAuth né SSO (si potranno innestare in seguito producendo lo stesso `Principal`). Le sessioni MCP non sono legate al token che le ha aperte (ogni richiesta è ri-autenticata col token che porta, quindi una revoca vale subito, ma un id di sessione noto non è un segreto separato). Per ora l'identità decide solo **quali wiki** si possono raggiungere; la separazione per pagina, l'audit e la scrittura remota arrivano in seguito. Nel file ci sono solo hash: un file trapelato non dà accesso, ma conviene tenerlo con permessi stretti comunque.
+**Limiti.** Il token resta un segreto Bearer portato da chi lo usa: chi lo copia, lo è. Non c'è OAuth né SSO (si potranno innestare in seguito producendo lo stesso `Principal`). Le sessioni MCP non sono legate al token che le ha aperte (ogni richiesta è ri-autenticata col token che porta, quindi una revoca vale subito, ma un id di sessione noto non è un segreto separato). Per ora l'identità decide solo **quali wiki** si possono raggiungere; la separazione per pagina e la scrittura remota arrivano in seguito (l'audit di chi chiama cosa c'è già: vedi «Operatività»). Nel file ci sono solo hash: un file trapelato non dà accesso, ma conviene tenerlo con permessi stretti comunque.
 
 `GET /healthz` non richiede autenticazione e risponde `200` con `{"status":"ok"}`, senza contenuti della wiki né versioni: serve agli healthcheck (Docker, load balancer). Non passa dal server MCP e non è soggetto al rate limit.
 
@@ -250,6 +250,131 @@ Per l'esposizione su internet (non solo rete privata/VPN) metti un reverse proxy
 Per far girare il server su una macchina Linux (systemd o Docker) e tenere la wiki aggiornata da git, con reverse proxy TLS e webhook opzionale, vedi [`deploy/README.md`](deploy/README.md).
 
 Un agente **remoto** configura l'endpoint HTTP (`/mcp/<name>`) con il proprio token; un agente **locale** continua a usare solo la configurazione stdio (vedi sopra), che include già lettura e scrittura — non serve configurare entrambi i trasporti sulla stessa macchina.
+
+## Operatività: log, audit e metriche
+
+Il server HTTP scrive su **stdout** un oggetto JSON per riga (journald e Docker lo raccolgono così com'è). Tre cose escono dallo stesso canale, distinte dal campo `event`: i log applicativi (`startup`, `route`, `config-warning`, `token-file-error`, `request-error`, `reload`, ...), l'**audit** di ogni chiamata a un tool (`event: "audit"`) e gli **accessi rifiutati** (`event: "auth"`).
+
+| Variabile | Default | Significato |
+| --- | --- | --- |
+| `LOG_LEVEL` | `info` | `debug`, `info`, `warn`, `error` o `silent`. Vale per i log applicativi; audit e `auth` non dipendono dal livello (sono sempre scritti) |
+| `LOG_FORMAT` | `json` in HTTP, `text` in stdio | `json` (una riga = un oggetto) oppure `text` (`ts LEVEL evento chiave=valore ...`, leggibile in sviluppo) |
+| `AUDIT_LOG_FILE` | non impostato | percorso di un file dove scrivere audit e `auth` (JSON, in append, `0600` alla creazione) invece che su stdout. Se non è scrivibile il processo non parte |
+| `AUDIT_QUERY_MAX_CHARS` | `100` | caratteri massimi della query di `wikiSearch` registrati nell'audit |
+| `MCP_METRICS_TOKEN` | non impostato | abilita `GET /metrics`, protetto da questo token Bearer. Senza, l'endpoint non esiste (`404`). Deve essere diverso da `MCP_HTTP_TOKEN` |
+
+**stdio.** Lì stdout è il protocollo MCP: il logger scrive solo su **stderr** (formato `text`) e l'audit è **spento** a meno che si imposti `AUDIT_LOG_FILE`. Le chiamate locali sono registrate con `principal: {"id":"local","user":"local"}`. In stdio il file non si riapre con SIGHUP: per ruotarlo usa `copytruncate` (vedi sotto).
+
+### Evento `audit`
+
+Uno per ogni chiamata a un tool, di qualunque wiki. Lo produce un wrapper applicato alla registrazione dei tool (`src/server.ts`), non i tool stessi.
+
+```json
+{"ts":"2026-10-30T16:52:51.498Z","level":"info","event":"audit","requestId":"f3ef2b98-ee8f-41f4-bd58-4b6d4b669725","principal":{"id":"alice-1","user":"alice"},"wiki":"hr","tool":"wikiSearch","outcome":"ok","durationMs":0.79,"args":{"q":"uno","qLength":3,"topK":5},"resultSize":1}
+```
+
+| Campo | Significato |
+| --- | --- |
+| `ts`, `level`, `event` | istante ISO UTC, livello, tipo di evento |
+| `requestId` | uuid della richiesta HTTP, lo stesso dell'evento `auth` se ce n'è uno; in stdio un uuid per chiamata |
+| `principal` | `id` della credenziale e `user`; mai il token né il suo hash. `local` in stdio |
+| `wiki`, `tool` | wiki servita dall'endpoint e nome MCP del tool |
+| `outcome` | `ok`; `error` (il tool ha lanciato, o ha restituito `{error}` / `{success:false}`, come «pagina non trovata»); `denied` (negata: riservato ai permessi per pagina, vedi CLAUDE.md) |
+| `durationMs` | durata dell'esecuzione del tool |
+| `args` | solo campi non sensibili e corti (slug, path, filtri, `topK`); la query di `wikiSearch` troncata (`q`) con la lunghezza originale (`qLength`); per le scritture solo `path` e `contentLength`/`entryLength`, **mai il contenuto** |
+| `resultSize` | numero di elementi se il risultato è un elenco, altrimenti byte del risultato serializzato; assente in caso di errore |
+| `error` | solo con `error`: messaggio breve su una riga, senza stack né percorsi assoluti |
+| `reason` | solo con `denied`: perché |
+
+### Evento `auth`
+
+Un evento per ogni accesso rifiutato (`/healthz` non genera eventi).
+
+```json
+{"ts":"2026-10-30T16:52:51.609Z","level":"info","event":"auth","requestId":"802a8d96-75ba-444c-88df-8375f4e9739c","ip":"127.0.0.1","reason":"wiki-not-allowed","status":404,"endpoint":"mcp","principal":{"id":"alice-1","user":"alice"},"requestedWiki":"it"}
+```
+
+`reason` è uno di: `missing-token`, `invalid-token` (sconosciuto o revocato), `expired-token`, `rate-limited` (con `retryAfterSeconds`), `wiki-not-allowed` e `wiki-unknown` (token valido, risposta `404`; `principal` e `requestedWiki` presenti). `endpoint` è `mcp` o `metrics`. Il client riceve sempre le stesse risposte di prima (`401`, `429`, `404` identico per wiki inesistente e non abilitata): il motivo esiste solo nel log. Il token presentato e i suoi hash non vengono mai registrati. `ip` è l'indirizzo del peer: dietro un reverse proxy è quello del proxy.
+
+### Privacy
+
+Una sanificazione unica (`src/log.ts`) vale per ogni riga: le chiavi `token`, `secret`, `password`, `authorization`, `cookie`, `hash` e i campi `content`/`body` sono redatti a qualunque profondità, le stringhe perdono `Bearer ...` e `sha256:...`, gli errori diventano un messaggio breve senza stack. Il JSON esce con i newline escapati e il formato `text` mette tra virgolette ogni valore non banale: un valore non può aprire una riga falsa. I test (`tests/http-observability.test.ts`) verificano con un token e un contenuto finti che non compaiano in nessuna riga.
+
+Limite noto: una chiamata che la libreria MCP scarta per input non valido (argomenti che non rispettano lo schema) non arriva al tool, quindi non produce un evento `audit`; compare solo come richiesta HTTP nelle metriche. Gli errori interni della libreria `@mastra/mcp` escono su stderr, non strutturati.
+
+### Interrogare il journal
+
+```bash
+# chi ha chiamato cosa, sulla wiki hr
+journalctl -u wiki-mcp-http -o cat | jq -c 'select(.event=="audit" and .wiki=="hr") | {ts, user:.principal.user, tool, outcome, durationMs}'
+
+# accessi rifiutati, per motivo e IP
+journalctl -u wiki-mcp-http -o cat --since today | jq -r 'select(.event=="auth") | [.reason, .ip] | @tsv' | sort | uniq -c | sort -rn
+
+# le chiamate lente (> 500 ms) o in errore
+journalctl -u wiki-mcp-http -o cat | jq -c 'select(.event=="audit" and (.durationMs > 500 or .outcome != "ok"))'
+```
+
+Con Docker: `docker compose logs -f mcp | jq -c 'select(.event=="audit")'` (le righe di `docker compose logs` hanno un prefisso: `--no-log-prefix`).
+
+### Metriche (`GET /metrics`)
+
+Formato testo Prometheus, senza dipendenze, attivo solo con `MCP_METRICS_TOKEN`:
+
+| Metrica | Etichette | Tipo |
+| --- | --- | --- |
+| `wiki_mcp_tool_calls_total` | `wiki`, `tool`, `outcome` | counter |
+| `wiki_mcp_tool_duration_seconds` | `wiki`, `tool` | histogram (bucket fissi da 5 ms a 10 s) |
+| `wiki_mcp_auth_failures_total` | `reason` | counter |
+| `wiki_mcp_http_requests_total` | `status` | counter (esclusa `/healthz`) |
+| `wiki_mcp_wiki_pages` | `wiki` | gauge, dalla cache del service |
+
+Le etichette vengono solo da insiemi chiusi (wiki configurate, tool registrati, motivi elencati sopra, codici di stato): mai utenti, slug o query. I contatori sono in memoria e ripartono da zero al riavvio, come vuole Prometheus.
+
+```yaml
+# prometheus.yml
+scrape_configs:
+  - job_name: wiki-mcp
+    metrics_path: /metrics
+    scheme: https
+    authorization:
+      type: Bearer
+      credentials_file: /etc/prometheus/wiki-mcp-metrics.token
+    static_configs:
+      - targets: ['wiki.example.com']
+```
+
+```bash
+curl -s -H "Authorization: Bearer $MCP_METRICS_TOKEN" http://127.0.0.1:3000/metrics
+```
+
+Un token errato o mancante dà `401` e conta nel rate limit per IP, come per l'endpoint MCP; un token MCP valido non apre `/metrics`.
+
+### Rotazione del file di audit
+
+Con `AUDIT_LOG_FILE` il file è aperto in append. Due modi coerenti, entrambi verificati dai test:
+
+- **Riapertura su SIGHUP** (consigliata, HTTP): il processo apre di nuovo il percorso. `logrotate` sposta il file e manda il segnale; le righe già in coda finiscono nel file vecchio, le nuove vanno in quello nuovo. Il gestore di SIGHUP c'è sempre (senza file non fa nulla), quindi `systemctl reload` non uccide il servizio.
+- **`copytruncate`**: sicuro perché il file è in append (dopo il troncamento si scrive dall'inizio). Può perdere le righe scritte tra la copia e il troncamento: serve per stdio, dove non c'è SIGHUP.
+
+Esempio `/etc/logrotate.d/wiki-mcp`:
+
+```
+/var/log/wiki-mcp/audit.log {
+    weekly
+    rotate 12
+    compress
+    delaycompress
+    missingok
+    notifempty
+    sharedscripts
+    postrotate
+        systemctl kill -s HUP wiki-mcp-http.service
+    endscript
+}
+```
+
+Per Docker, senza file, la rotazione è quella del logging driver (`max-size`/`max-file`). Dettagli in [`deploy/README.md`](deploy/README.md).
 
 ## Licenza
 

@@ -52,9 +52,16 @@ export function canAccessWiki(principal: Principal, wiki: string): boolean {
   return principal.wikis === '*' || principal.wikis.includes(wiki)
 }
 
+/** Esito di una verifica: il principal, oppure il motivo (solo per l'audit, mai per il client). */
+export type AuthCheck =
+  | { principal: Principal; reason?: undefined }
+  | { principal?: undefined; reason: 'invalid-token' | 'expired-token' }
+
 export interface Authenticator {
   /** Principal del token presentato, `undefined` se sconosciuto, revocato o scaduto. */
   authenticate(token: string): Principal | undefined
+  /** Come `authenticate`, ma distingue token scaduto da sconosciuto/revocato (per l'audit). */
+  check?(token: string): AuthCheck
 }
 
 function sha256(value: string): Buffer {
@@ -93,27 +100,28 @@ export function createAuthenticator(options: AuthenticatorOptions): Authenticato
   const now = options.now ?? Date.now
   const legacyDigest = options.legacyToken ? sha256(options.legacyToken) : undefined
 
-  return {
-    authenticate(token: string): Principal | undefined {
-      const digest = sha256(token)
-      let matched: Principal | undefined
-      let expired = false
+  function check(token: string): AuthCheck {
+    const digest = sha256(token)
+    let matched: Principal | undefined
+    let expired = false
 
-      if (legacyDigest && timingSafeEqual(digest, legacyDigest)) matched = LEGACY_PRINCIPAL
+    if (legacyDigest && timingSafeEqual(digest, legacyDigest)) matched = LEGACY_PRINCIPAL
 
-      for (const entry of options.entries?.() ?? []) {
-        const stored = Buffer.from(entry.tokenHash.slice('sha256:'.length), 'hex')
-        if (timingSafeEqual(digest, stored) && matched === undefined) {
-          if (entry.expiresAt !== undefined && now() >= Date.parse(entry.expiresAt)) {
-            expired = true
-          } else {
-            matched = principalOf(entry)
-          }
+    for (const entry of options.entries?.() ?? []) {
+      const stored = Buffer.from(entry.tokenHash.slice('sha256:'.length), 'hex')
+      if (timingSafeEqual(digest, stored) && matched === undefined) {
+        if (entry.expiresAt !== undefined && now() >= Date.parse(entry.expiresAt)) {
+          expired = true
+        } else {
+          matched = principalOf(entry)
         }
       }
-      return expired ? undefined : matched
-    },
+    }
+    if (expired) return { reason: 'expired-token' }
+    return matched ? { principal: matched } : { reason: 'invalid-token' }
   }
+
+  return { authenticate: (token) => check(token).principal, check }
 }
 
 export interface AuthSetup {

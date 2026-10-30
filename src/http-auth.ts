@@ -1,8 +1,19 @@
-import { createHash, timingSafeEqual } from 'node:crypto'
+import { createHash, randomUUID, timingSafeEqual } from 'node:crypto'
 import type http from 'node:http'
-import { canAccessWiki, createAuthenticator, type Authenticator, type Principal } from './auth.js'
+import {
+  canAccessWiki,
+  createAuthenticator,
+  type AuthCheck,
+  type Authenticator,
+  type Principal,
+} from './auth.js'
+import { runWithRequestId } from './audit.js'
+import { shortError, truncate } from './log.js'
+import { METRIC, type AuthReason } from './metrics.js'
+import { telemetry as processTelemetry, type Telemetry } from './telemetry.js'
 
 export const HEALTH_PATH = '/healthz'
+export const METRICS_PATH = '/metrics'
 export const MCP_PATH = '/mcp'
 
 function sha256(value: string): Buffer {
@@ -106,6 +117,13 @@ export interface RequestHandlerOptions {
    */
   token?: string
   limiter: FailureRateLimiter
+  /** Logger, audit e metriche. Default: la telemetria di processo (`setTelemetry`). */
+  telemetry?: Telemetry
+  /**
+   * Token (Bearer) dedicato a `GET /metrics`, distinto da quelli MCP. Senza, l'endpoint non esiste:
+   * 404 come qualunque altro percorso.
+   */
+  metricsToken?: string
   /** Nomi delle wiki servite (già validati all'avvio). */
   wikis: readonly string[]
   /**
@@ -138,7 +156,7 @@ function notFound(res: http.ServerResponse): void {
 }
 
 export function createRequestHandler(options: RequestHandlerOptions) {
-  const { limiter, wikis, mcp } = options
+  const { limiter, wikis, mcp, metricsToken } = options
   const auth =
     options.auth ??
     (options.token
@@ -146,15 +164,79 @@ export function createRequestHandler(options: RequestHandlerOptions) {
       : (() => {
           throw new Error('createRequestHandler: serve `auth` o `token`')
         })())
+  const check = (token: string): AuthCheck =>
+    auth.check?.(token) ??
+    (() => {
+      const principal = auth.authenticate(token)
+      return principal ? { principal } : { reason: 'invalid-token' as const }
+    })()
 
   return async (req: http.IncomingMessage, res: http.ServerResponse): Promise<void> => {
+    const tel = options.telemetry ?? processTelemetry()
     const url = new URL(req.url ?? '', `http://${req.headers.host ?? 'localhost'}`)
 
-    // Prima del token e fuori dal server MCP: nessun contenuto, nessuna versione.
+    // Prima del token e fuori dal server MCP: nessun contenuto, nessuna versione. Niente evento,
+    // niente metrica: è rumore (healthcheck ogni pochi secondi).
     if (url.pathname === HEALTH_PATH && (req.method === 'GET' || req.method === 'HEAD')) {
       res
         .writeHead(200, { 'Content-Type': 'application/json' })
         .end(JSON.stringify({ status: 'ok' }))
+      return
+    }
+
+    const requestId = randomUUID()
+    const ip = req.socket.remoteAddress ?? 'unknown'
+    res.once('finish', () =>
+      tel.metrics.inc(
+        METRIC.httpRequests,
+        { status: String(res.statusCode) },
+        'Richieste HTTP per codice di stato (esclusa /healthz)',
+      ),
+    )
+
+    // Un fallimento di accesso: evento `auth` (mai il token presentato né i suoi hash) e metrica.
+    // `reason` è interno: il client vede solo 401/429/404 identici per tutti i motivi.
+    const denyAccess = (
+      reason: AuthReason,
+      status: number,
+      extra: Record<string, unknown> = {},
+    ): void => {
+      tel.metrics.inc(
+        METRIC.authFailures,
+        { reason },
+        'Accessi HTTP rifiutati, per motivo (401, 429, 404 su wiki non accessibile)',
+      )
+      tel.auditor.record('auth', { requestId, ip, reason, status, ...extra })
+    }
+
+    const rateLimited = (extra: Record<string, unknown>): boolean => {
+      const retryAfter = limiter.retryAfterSeconds(ip)
+      if (retryAfter <= 0) return false
+      denyAccess('rate-limited', 429, { ...extra, retryAfterSeconds: retryAfter })
+      res
+        .writeHead(429, { 'Content-Type': 'application/json', 'Retry-After': String(retryAfter) })
+        .end(JSON.stringify({ error: 'too_many_requests' }))
+      return true
+    }
+
+    const unauthorized = (reason: AuthReason, extra: Record<string, unknown>): void => {
+      limiter.recordFailure(ip)
+      denyAccess(reason, 401, extra)
+      res
+        .writeHead(401, { 'Content-Type': 'application/json' })
+        .end(JSON.stringify({ error: 'unauthorized' }))
+    }
+
+    // Metriche: solo con un token dedicato configurato; stesso rate limit sui tentativi falliti.
+    if (url.pathname === METRICS_PATH && metricsToken !== undefined && req.method === 'GET') {
+      const extra = { endpoint: 'metrics' }
+      if (rateLimited(extra)) return
+      const presented = bearerToken(req)
+      if (presented === undefined) return unauthorized('missing-token', extra)
+      if (!safeEqual(presented, metricsToken)) return unauthorized('invalid-token', extra)
+      res
+        .writeHead(200, { 'Content-Type': 'text/plain; version=0.0.4; charset=utf-8' })
+        .end(await tel.metrics.renderText())
       return
     }
 
@@ -164,26 +246,15 @@ export function createRequestHandler(options: RequestHandlerOptions) {
       return
     }
 
-    const ip = req.socket.remoteAddress ?? 'unknown'
-
-    const retryAfter = limiter.retryAfterSeconds(ip)
-    if (retryAfter > 0) {
-      res
-        .writeHead(429, { 'Content-Type': 'application/json', 'Retry-After': String(retryAfter) })
-        .end(JSON.stringify({ error: 'too_many_requests' }))
-      return
-    }
+    const extra = { endpoint: 'mcp' }
+    if (rateLimited(extra)) return
 
     // Token sconosciuto, revocato o scaduto: stessa 401 e stesso conteggio nel rate limit.
     const presented = bearerToken(req)
-    const principal = presented === undefined ? undefined : auth.authenticate(presented)
-    if (!principal) {
-      limiter.recordFailure(ip)
-      res
-        .writeHead(401, { 'Content-Type': 'application/json' })
-        .end(JSON.stringify({ error: 'unauthorized' }))
-      return
-    }
+    if (presented === undefined) return unauthorized('missing-token', extra)
+    const checked = check(presented)
+    const principal = checked.principal
+    if (!principal) return unauthorized(checked.reason, extra)
 
     // Solo da qui, a token valido, si decide a quale wiki va la richiesta: chi non ha il token
     // non deve poter distinguere un nome esistente da uno inesistente (stessa 401 per tutti), né
@@ -191,6 +262,7 @@ export function createRequestHandler(options: RequestHandlerOptions) {
     // valido solo con una wiki sola; con più wiki l'endpoint va scelto, e il messaggio non li elenca.
     // Una wiki non abilitata per questo principal è trattata come inesistente: stessa 404, stesso
     // corpo, così un token valido non può sondare l'esistenza di wiki che non gli sono assegnate.
+    // Nell'audit i due casi restano distinti (`wiki-not-allowed` / `wiki-unknown`), solo lì.
     let wiki: string | undefined
     if (route.kind === 'alias') {
       if (wikis.length === 1) wiki = wikis[0]
@@ -198,14 +270,23 @@ export function createRequestHandler(options: RequestHandlerOptions) {
       wiki = route.name
     }
     if (wiki === undefined || !canAccessWiki(principal, wiki)) {
+      denyAccess(wiki === undefined ? 'wiki-unknown' : 'wiki-not-allowed', 404, {
+        ...extra,
+        principal: { id: principal.id, user: principal.user },
+        requestedWiki: route.kind === 'wiki' ? truncate(route.name, 64) : '(alias)',
+      })
       notFound(res)
       return
     }
 
     try {
-      await mcp(wiki, url, req, res, principal)
+      await runWithRequestId(requestId, () => mcp(wiki, url, req, res, principal))
     } catch (error) {
-      console.error('Errore gestione richiesta MCP HTTP:', error)
+      tel.logger.error('request-error', {
+        requestId,
+        msg: 'Errore gestione richiesta MCP HTTP',
+        error: shortError(error),
+      })
       if (!res.headersSent) {
         res.writeHead(500).end('Internal server error')
       }

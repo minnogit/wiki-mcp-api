@@ -14,6 +14,9 @@ EnvironmentFile=/etc/wiki-mcp/http.env
 ExecStart=/usr/bin/node /opt/wiki-mcp-api/dist/http.js
 Restart=on-failure
 RestartSec=5s
+# `systemctl reload` manda SIGHUP: il server riapre il file di audit (se c'è AUDIT_LOG_FILE) e
+# continua a girare. Lo usa anche logrotate (vedi deploy/README.md, «Log, audit e metriche»).
+ExecReload=/bin/kill -HUP $MAINPID
 
 # Hardening: il processo legge la wiki e basta, non scrive da nessuna parte.
 NoNewPrivileges=true
@@ -32,6 +35,10 @@ SystemCallArchitectures=native
 CapabilityBoundingSet=
 # Il checkout è scritto da wiki-sync.service (altro utente): qui solo lettura.
 ReadOnlyPaths=/var/lib/wiki-mcp
+# Solo se imposti AUDIT_LOG_FILE=/var/log/wiki-mcp/audit.log: con ProtectSystem=strict serve
+# dichiarare la cartella scrivibile (e crearla, vedi deploy/README.md). Senza AUDIT_LOG_FILE
+# l'audit esce su stdout/journald e queste righe restano commentate.
+#ReadWritePaths=/var/log/wiki-mcp
 
 [Install]
 WantedBy=multi-user.target

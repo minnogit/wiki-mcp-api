@@ -98,6 +98,10 @@ RAW_PATH=/var/lib/wiki-mcp/checkout/raw
 WIKI_DOMAIN=Questa wiki documenta il dominio di ...
 WIKI_TZ=Europe/Rome
 # MCP_HTTP_EXPOSE_RAW=true
+# Log, audit e metriche (vedi «Log, audit e metriche» sotto): tutti opzionali
+# LOG_LEVEL=info
+# MCP_METRICS_TOKEN=<openssl rand -hex 32>
+# AUDIT_LOG_FILE=/var/log/wiki-mcp/audit.log
 ```
 
 ```bash
@@ -247,6 +251,68 @@ Oppure in `.mcp.json`:
 
 Tieni il token in una variabile d'ambiente, non nel file. Da remoto sono disponibili solo i tool di lettura delle pagine (più quelli sulle sorgenti se hai impostato `MCP_HTTP_EXPOSE_RAW=true`).
 
+## Log, audit e metriche
+
+Il server scrive su stdout una riga JSON per evento: log applicativi, `audit` (chi ha chiamato quale tool) e `auth` (accessi rifiutati). Schema degli eventi e variabili sono nel [README principale](../README.md#operatività-log-audit-e-metriche).
+
+### Default: journald (systemd) e Docker
+
+Senza altre impostazioni non c'è nulla da configurare: con systemd le righe finiscono in `journalctl -u wiki-mcp-http`, con Docker in `docker compose logs mcp`. La rotazione è quella di journald (`SystemMaxUse=`, `MaxRetentionSec=` in `/etc/systemd/journald.conf`) o del logging driver di Docker:
+
+```yaml
+    logging:
+      driver: json-file
+      options: { max-size: "20m", max-file: "10" }
+```
+
+```bash
+journalctl -u wiki-mcp-http -o cat | jq -c 'select(.event=="audit") | {ts, user:.principal.user, wiki, tool, outcome}'
+journalctl -u wiki-mcp-http -o cat --since "1 hour ago" | jq -c 'select(.event=="auth")'
+```
+
+Il journal non è un archivio di audit: se serve conservare l'audit a lungo o separarlo dai log applicativi, usa il file.
+
+### Audit su file (`AUDIT_LOG_FILE`)
+
+Il file è creato dal processo con permessi `0600` (proprietario `wikimcp`). La cartella la prepari tu, e con `ProtectSystem=strict` va dichiarata scrivibile nella unit:
+
+```bash
+sudo install -d -o wikimcp -g wikimcp -m 0750 /var/log/wiki-mcp
+echo 'AUDIT_LOG_FILE=/var/log/wiki-mcp/audit.log' | sudo tee -a /etc/wiki-mcp/http.env
+sudo sed -i 's|^#ReadWritePaths=/var/log/wiki-mcp|ReadWritePaths=/var/log/wiki-mcp|' /etc/systemd/system/wiki-mcp-http.service
+sudo systemctl daemon-reload && sudo systemctl restart wiki-mcp-http
+```
+
+Solo in questo caso la unit cambia (`ReadWritePaths`); senza `AUDIT_LOG_FILE` resta com'è. Se il percorso non è scrivibile il servizio non parte e `journalctl -u wiki-mcp-http` dice quale file e perché (`AUDIT_LOG_FILE: non riesco a scrivere in ...`). Con il file, audit ed eventi `auth` vanno **solo** lì (sul journal restano i log applicativi); se il file dà errore a runtime il server lo segnala e ripiega su stdout, per non perdere righe.
+
+Con Docker monta una cartella (non un singolo file, per la rotazione) scrivibile dall'uid 1000: `- /var/log/wiki-mcp:/var/log/wiki-mcp` e `AUDIT_LOG_FILE=/var/log/wiki-mcp/audit.log`.
+
+### Rotazione (logrotate + SIGHUP)
+
+Il servizio riapre il file quando riceve SIGHUP (`ExecReload` nella unit lo manda anche con `systemctl reload`). `/etc/logrotate.d/wiki-mcp`:
+
+```
+/var/log/wiki-mcp/audit.log {
+    weekly
+    rotate 12
+    compress
+    delaycompress
+    missingok
+    notifempty
+    create 0600 wikimcp wikimcp
+    sharedscripts
+    postrotate
+        systemctl kill -s HUP wiki-mcp-http.service
+    endscript
+}
+```
+
+`logrotate` rinomina il file e manda il segnale: il servizio chiude il vecchio (dopo aver scritto la coda) e apre `audit.log` nuovo, senza perdere righe. Provala con `sudo logrotate -f /etc/logrotate.d/wiki-mcp` e controlla che `audit.log` continui a crescere e `audit.log.1` no. Alternativa senza segnali, `copytruncate` al posto di `create`/`postrotate`: funziona (il file è in append) ma può perdere le righe scritte tra la copia e il troncamento. Con Docker, e dove non c'è systemd, `docker kill -s HUP <container>` o `kill -HUP <pid>` nel `postrotate`.
+
+### Metriche
+
+Con `MCP_METRICS_TOKEN` in `http.env`, `GET /metrics` risponde (Bearer) ed è raggiungibile dal proxy come qualunque altro percorso. Se Prometheus sta sulla stessa macchina, scrape su `127.0.0.1:3000` senza passare dal proxy; se passa dal proxy, `/metrics` è raggiungibile da chi ha il token, quindi nel Caddyfile limitalo agli IP di Prometheus (`@metrics path /metrics` + `remote_ip`). Esempio di scrape nel README principale.
+
 ## Verificare lo stato
 
 ```bash
@@ -266,6 +332,9 @@ git -C /var/lib/wiki-mcp/checkout log -1 --format='%h %cd %s'
 # servizi
 systemctl status wiki-mcp-http.service wiki-webhook.service
 journalctl -u wiki-mcp-http.service -f
+
+# metriche (se MCP_METRICS_TOKEN è impostato)
+curl -fsS -H "Authorization: Bearer $MCP_METRICS_TOKEN" http://127.0.0.1:3000/metrics | head
 ```
 
 Per confrontare il checkout con il remoto: `git -C /var/lib/wiki-mcp/checkout rev-parse --short HEAD` deve coincidere con `git ls-remote <url> refs/heads/main`.

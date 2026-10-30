@@ -3,6 +3,7 @@ import * as path from 'node:path'
 import { randomBytes } from 'node:crypto'
 import { z } from 'zod'
 import { ConfigError } from './config.js'
+import { log } from './log.js'
 
 const HASH_RE = /^sha256:[0-9a-f]{64}$/
 
@@ -112,7 +113,7 @@ export interface TokenFileOptions {
   /** Intervallo minimo tra due controlli (stat) del file, in ms. Default 2000. */
   checkIntervalMs?: number
   now?: () => number
-  /** Destinazione degli errori di ricarica. Default: console.error. */
+  /** Destinazione degli errori di ricarica. Default: il logger di processo (src/log.ts). */
   logger?: (message: string) => void
 }
 
@@ -143,7 +144,7 @@ export class TokenFileStore {
     this.full = path.resolve(file)
     this.interval = options.checkIntervalMs ?? 2000
     this.now = options.now ?? Date.now
-    this.logger = options.logger ?? ((m) => console.error(m))
+    this.logger = options.logger ?? ((msg) => log().error('token-file-error', { msg }))
     this.current = loadTokenFile(this.full, wikiNames)
     this.signature = this.statSignature()
     this.lastCheck = this.now()

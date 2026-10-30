@@ -39,6 +39,13 @@ services:
       - "127.0.0.1:3000:3000"
     volumes:
       - wiki-checkout:/data:ro
+      # Solo con AUDIT_LOG_FILE=/var/log/wiki-mcp/audit.log in .env.mcp (cartella scrivibile dall'uid 1000);
+      # senza, audit e log applicativi escono su stdout (`docker compose logs mcp`).
+      # - /var/log/wiki-mcp:/var/log/wiki-mcp
+    # Rotazione dei log su stdout (vedi deploy/README.md, «Log, audit e metriche»).
+    logging:
+      driver: json-file
+      options: { max-size: "20m", max-file: "10" }
     read_only: true
     cap_drop:
       - ALL
