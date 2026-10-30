@@ -57,7 +57,7 @@ describe('writePage', () => {
   it('i file riservati della radice sono esenti dal frontmatter', async () => {
     const { svc } = init()
     for (const name of ['index.md', 'log.md', 'sources.md', 'overview.md']) {
-      await expect(svc.writePage(name, '# libero')).resolves.toBeUndefined()
+      await expect(svc.writePage(name, '# libero')).resolves.toEqual([])
     }
     await expect(svc.writePage('sottocartella/log.md', '# libero')).rejects.toThrow(
       'Frontmatter non valido',

@@ -49,9 +49,22 @@ export function cleanup(fixture: Fixture): void {
 }
 
 export function frontmatter(
-  opts: Partial<{ tipo: string; tags: string[]; aggiornato: string; stato: string }> = {},
+  opts: Partial<{
+    tipo: string
+    tags: string[]
+    aggiornato: string
+    stato: string
+    /** righe YAML in più (es. `visibilita: riservata`), accodate prima della chiusura */
+    extra: string
+  }> = {},
 ): string {
-  const { tipo = 'concetto', tags = ['test'], aggiornato = '2026-08-22', stato = 'bozza' } = opts
+  const {
+    tipo = 'concetto',
+    tags = ['test'],
+    aggiornato = '2026-08-22',
+    stato = 'bozza',
+    extra,
+  } = opts
   return (
     '---\n' +
     `tipo: ${tipo}\n` +
@@ -59,6 +72,7 @@ export function frontmatter(
     'fonti: []\n' +
     `aggiornato: "${aggiornato}"\n` +
     `stato: ${stato}\n` +
+    (extra ? `${extra}\n` : '') +
     '---\n\n'
   )
 }

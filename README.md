@@ -194,7 +194,7 @@ Il file è una lista JSON validata all'avvio (campi sconosciuti rifiutati):
 | --- | --- | --- |
 | `id` | sì | identificatore univoco della credenziale (`[A-Za-z0-9._-]`, `legacy` è riservato) |
 | `user` | sì | a chi appartiene |
-| `groups` | no | gruppi dell'utente (usati dai permessi per pagina, in arrivo) |
+| `groups` | no | gruppi dell'utente, usati dai permessi per pagina (vedi «Permessi per pagina»); il gruppo `admin` vede tutto |
 | `wikis` | sì | lista di nomi di wiki esistenti in `WIKI_CONFIG`, oppure `"*"` |
 | `tokenHash` | sì | `sha256:<64 cifre esadecimali>` del token completo. Mai il token in chiaro |
 | `expiresAt` | no | data ISO; dopo questa data il token è rifiutato (401) |
@@ -241,7 +241,57 @@ Comportamento:
 - **Token legacy.** `MCP_HTTP_TOKEN` continua a funzionare, da solo o insieme al file: identità `legacy`, tutte le wiki, nessun gruppo. Se è l'unica credenziale configurata, all'avvio il server stampa un avviso che consiglia i token per utente. Per revocare un'utenza basta toglierla dal file; per il token legacy bisogna cambiarlo (e riavviare).
 - **Identità nel codice.** Dentro i tool, `currentPrincipal()` (`src/auth.ts`) dà l'utente della richiesta; in stdio è `undefined` (locale, fiducia piena). Vedi CLAUDE.md.
 
-**Limiti.** Il token resta un segreto Bearer portato da chi lo usa: chi lo copia, lo è. Non c'è OAuth né SSO (si potranno innestare in seguito producendo lo stesso `Principal`). Le sessioni MCP non sono legate al token che le ha aperte (ogni richiesta è ri-autenticata col token che porta, quindi una revoca vale subito, ma un id di sessione noto non è un segreto separato). Per ora l'identità decide solo **quali wiki** si possono raggiungere; la separazione per pagina e la scrittura remota arrivano in seguito (l'audit di chi chiama cosa c'è già: vedi «Operatività»). Nel file ci sono solo hash: un file trapelato non dà accesso, ma conviene tenerlo con permessi stretti comunque.
+**Limiti.** Il token resta un segreto Bearer portato da chi lo usa: chi lo copia, lo è. Non c'è OAuth né SSO (si potranno innestare in seguito producendo lo stesso `Principal`). Le sessioni MCP non sono legate al token che le ha aperte (ogni richiesta è ri-autenticata col token che porta, quindi una revoca vale subito, ma un id di sessione noto non è un segreto separato). L'identità decide **quali wiki** si possono raggiungere e, dentro una wiki, **quali pagine** si vedono (vedi «Permessi per pagina»); la scrittura remota arriva in seguito (l'audit di chi chiama cosa c'è già: vedi «Operatività»). Nel file ci sono solo hash: un file trapelato non dà accesso, ma conviene tenerlo con permessi stretti comunque.
+
+### Permessi per pagina
+
+Dentro una wiki, ogni pagina può dichiarare chi la vede, nel frontmatter. I permessi valgono per le richieste HTTP con un token (i gruppi vengono dal token, vedi «Token per utente»).
+
+```yaml
+---
+tipo: analisi
+tags: [paghe]
+fonti: []
+aggiornato: 2026-10-30
+stato: stabile
+visibilita: riservata        # pubblica | interna | riservata   (opzionale)
+gruppi: [hr, legal]          # opzionale, conta solo con riservata
+---
+```
+
+Regole:
+
+- **`visibilita` assente, `pubblica` o `interna`**: la pagina è visibile a ogni token che ha accesso alla wiki. Le wiki esistenti non cambiano comportamento. `interna` oggi ha lo stesso effetto di `pubblica`: è un'etichetta riservata a distinzioni future (ad esempio l'accesso anonimo) e non ha regole proprie.
+- **`riservata`**: visibile solo a chi ha almeno un gruppo tra quelli in `gruppi`. Senza `gruppi` (o con la lista vuota) è visibile solo al gruppo speciale `admin`.
+- **`admin`** vede sempre tutto, nella wiki a cui il token ha accesso.
+- **`gruppi` su una pagina non riservata non ha effetto** (`wikiWritePage` lo segnala con `warnings`).
+- **Fail-closed**: un valore di `visibilita` sconosciuto (un refuso come `riservta`) vale `riservata`, mai `pubblica`, ed è segnalato nel log (`page-visibility-invalid`, una volta per versione del file); `wikiReadPage` mostra `frontmatter.visibilitaNonValida` a chi può leggere la pagina. Un `gruppi` che non è una lista vale lista vuota. In scrittura (`wikiWritePage`) i valori non validi sono invece rifiutati con un errore descrittivo; `index.md`, `log.md`, `sources.md` e `overview.md` restano esenti dal resto del frontmatter, ma se dichiarano `visibilita`/`gruppi` quei due campi sono validati.
+- **Il token legacy (`MCP_HTTP_TOKEN`) non ha gruppi**: non vede nessuna pagina `riservata`, nemmeno quelle con `gruppi`. Se serve un accesso completo con un token unico, crea un token per utente con il gruppo `admin` (`--groups admin`).
+- **Stdio locale** (nessun token, nessun principal) vede e scrive tutto: fiducia piena.
+
+Chi vede cosa, con tre pagine (`aperta` senza campo, `paghe` riservata a `hr`, `strategia` riservata senza `gruppi`):
+
+| Pagina | token con `hr` | token con `it` | token senza gruppi (anche legacy) | token con `admin` | stdio locale |
+| --- | --- | --- | --- | --- | --- |
+| `aperta` (nessun campo, `pubblica` o `interna`) | sì | sì | sì | sì | sì |
+| `paghe` (`riservata`, `gruppi: [hr]`) | sì | no | no | sì | sì |
+| `strategia` (`riservata`, senza `gruppi`) | no | no | no | sì | sì |
+| `refuso` (`visibilita: riservta`, `gruppi: [hr]`) | sì | no | no | sì | sì |
+
+**Le pagine non permesse sono invisibili, non «negate».** Non compaiono in `wikiSearch`, `wikiListPages`, `wikiGraph` (nodi, archi, orfani) né in `wikiStatus` (`totalPages`, `byTipo`, `byStato`, `lastUpdated`), e `wikiReadPage` risponde esattamente come per una pagina inesistente (stesso messaggio, nessuna differenza osservabile). Per chi legge, una pagina riservata non esiste. Il filtro sta nel service (`src/wiki/service.ts`) e si applica a ogni richiesta in base al token; la cache delle pagine resta per pagina e non contiene risultati filtrati. Le funzioni pure che decidono (`canRead`, `canWrite`, `visibleTo`) sono in `src/wiki/access.ts`.
+
+Il rifiuto compare solo nell'audit: la lettura diretta di una pagina **esistente** e non permessa produce un evento `denied` (`reason`: `visibility` o `visibility-invalid`), mentre una pagina davvero inesistente è un normale `error` «non trovata». Chi sbaglia slug e chi prova a leggere una riservata ricevono la stessa risposta, ma l'operatore li distingue. Ricerche, elenchi e grafo non producono `denied`: le pagine nascoste lì semplicemente non ci sono.
+
+**Fughe indirette chiuse.** Il corpus su cui la ricerca calcola frequenze (IDF), punteggi e vocabolario per i refusi è formato dalle sole pagine visibili al token: i punteggi e le tolleranze sono quelli che si avrebbero in una wiki senza le pagine nascoste (verificato nei test confrontando con una wiki «gemella»). Lo stesso per snippet, conteggi e data `lastUpdated`. Nel grafo un link da una pagina visibile a una nascosta compare come link a una pagina inesistente (come in una wiki senza quella pagina): ometterlo soltanto distinguerebbe le nascoste dalle inesistenti. `wikiChecksum` (solo con `MCP_HTTP_EXPOSE_RAW=true`) non rivela esistenza né hash di una pagina nascosta di `wiki/`.
+
+**Limiti noti, da conoscere.**
+
+- **Il testo delle pagine visibili non è filtrato.** Se una pagina pubblica contiene `[[paghe]]` o cita per titolo una pagina riservata, chi la legge vede quel testo. Vale soprattutto per `index.md` e `overview.md`, che per natura elencano le pagine: chi scrive la wiki deve evitare di nominare lì le pagine riservate, oppure marcare anche quei file con `visibilita: riservata`. I file riservati di radice (`index.md`, `log.md`, `sources.md`, `overview.md`) non sono filtrati per default, ma se hanno `visibilita` nel frontmatter il filtro vale come per ogni pagina. Stesso discorso per `log.md` e `sources.md` (nomi di sorgenti e di pagine ingerite).
+- **Le sorgenti `raw/` non hanno permessi per file.** `wikiListRaw`, `wikiReadRaw`, `wikiRawDiff` e `wikiChecksum` non applicano `visibilita`/`gruppi`: con `MCP_HTTP_EXPOSE_RAW=true` chi ha il token vede **tutto** `raw/` della wiki, anche se le pagine derivate sono riservate. Tieni `MCP_HTTP_EXPOSE_RAW` spento se le sorgenti contengono materiale riservato.
+- Il metadato `source` di `wikiStatus` (commit e data di sync del checkout git) è della wiki intera, non per pagina.
+- `GET /metrics` (token dedicato, per operatori) espone il numero totale di pagine della wiki, nascoste comprese.
+- Le differenze di tempo tra «negata» e «inesistente» non sono mascherate.
+- I permessi si basano sul frontmatter: chi può modificare i file della wiki (o scrivere su stdio) può cambiarli.
 
 `GET /healthz` non richiede autenticazione e risponde `200` con `{"status":"ok"}`, senza contenuti della wiki né versioni: serve agli healthcheck (Docker, load balancer). Non passa dal server MCP e non è soggetto al rate limit.
 
@@ -279,12 +329,12 @@ Uno per ogni chiamata a un tool, di qualunque wiki. Lo produce un wrapper applic
 | `requestId` | uuid della richiesta HTTP, lo stesso dell'evento `auth` se ce n'è uno; in stdio un uuid per chiamata |
 | `principal` | `id` della credenziale e `user`; mai il token né il suo hash. `local` in stdio |
 | `wiki`, `tool` | wiki servita dall'endpoint e nome MCP del tool |
-| `outcome` | `ok`; `error` (il tool ha lanciato, o ha restituito `{error}` / `{success:false}`, come «pagina non trovata»); `denied` (negata: riservato ai permessi per pagina, vedi CLAUDE.md) |
+| `outcome` | `ok`; `error` (il tool ha lanciato, o ha restituito `{error}` / `{success:false}`, come «pagina non trovata»); `denied` (negata: lettura diretta di una pagina esistente non permessa, vedi «Permessi per pagina»; la risposta al client resta identica a «non trovata») |
 | `durationMs` | durata dell'esecuzione del tool |
 | `args` | solo campi non sensibili e corti (slug, path, filtri, `topK`); la query di `wikiSearch` troncata (`q`) con la lunghezza originale (`qLength`); per le scritture solo `path` e `contentLength`/`entryLength`, **mai il contenuto** |
 | `resultSize` | numero di elementi se il risultato è un elenco, altrimenti byte del risultato serializzato; assente in caso di errore |
 | `error` | solo con `error`: messaggio breve su una riga, senza stack né percorsi assoluti |
-| `reason` | solo con `denied`: perché |
+| `reason` | solo con `denied`, da un vocabolario chiuso: `visibility` (pagina riservata, gruppo mancante) o `visibility-invalid` (valore di `visibilita` sconosciuto, trattato come riservata). Mai lo slug né i gruppi richiesti |
 
 ### Evento `auth`
 
