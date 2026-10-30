@@ -8,7 +8,7 @@ Il server è domain-agnostic: il contenuto della wiki e il dominio che documenta
 
 | Tool | Uso |
 | --- | --- |
-| `wikiSearch` | Ricerca full-text nella wiki |
+| `wikiSearch` | Ricerca full-text nella wiki (senza accenti, stemming italiano, frasi tra virgolette, refusi lievi) |
 | `wikiReadPage` | Legge una pagina della wiki |
 | `wikiListPages` | Elenca le pagine disponibili |
 | `wikiWritePage` | Scrive una pagina (solo in `wiki/`) |
