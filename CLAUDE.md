@@ -32,7 +32,8 @@ npm run format:check         # verify formatting without writing
 ## Architecture
 
 - **`src/stdio.ts`** — stdio entrypoint; loads `.env` via `dotenv/config`, starts `server.startStdio()`.
-- **`src/http.ts`** — HTTP entrypoint for remote read-only access. Validates a single fixed path (`/mcp`), checks a `Bearer <MCP_HTTP_TOKEN>` header on every request, and otherwise delegates to `remoteServer.startHTTP(...)`. Exits at startup if `MCP_HTTP_TOKEN` is unset — never relax this.
+- **`src/http.ts`** — HTTP entrypoint for remote read-only access. Wires config (port, host, token) to the handler and delegates MCP requests to `remoteServer.startHTTP(...)`. Listens on `MCP_HTTP_HOST` (default `127.0.0.1`, not all interfaces). Exits at startup if `MCP_HTTP_TOKEN` is unset — never relax this.
+- **`src/http-auth.ts`** — request handling logic for `http.ts`, kept separate so it is testable without starting the MCP server: unauthenticated `GET /healthz` (`{status:"ok"}`, evaluated before the token check, never touches the MCP server; other tooling such as Docker healthchecks relies on this exact path and contract), the single MCP path (`/mcp`), constant-time Bearer comparison (`timingSafeEqual` on sha256 digests), and an in-memory per-IP rate limiter on failed auth (429 + `Retry-After`). Covered by `tests/http-auth.test.ts`.
 - **`src/server.ts`** — instantiates two `MCPServer` instances from the same tool implementations:
   - `server` — full tool set (read + write), used by stdio.
   - `remoteServer` — used by HTTP. By default only the page-reading tools (`wikiReadTools`: `wikiSearch`, `wikiReadPage`, `wikiListPages`, `wikiGraph`, `wikiStatus`); the source tools (`sourceTools`: `wikiListRaw`, `wikiReadRaw`, `wikiRawDiff`, `wikiChecksum`) are mounted only with `MCP_HTTP_EXPOSE_RAW=true`, because over HTTP they expose everything in `RAW_PATH` and its git history. `wikiChecksum` counts as a source tool: it also checks `raw/`. When adding a new tool, decide explicitly whether it belongs in `readOnlyTools` (safe to expose remotely) or is write-capable (stdio-only, alongside `wikiWritePage`/`wikiAppendLog`).
@@ -62,7 +63,7 @@ npm run format:check         # verify formatting without writing
 | `wikiRawDiff` | `rawDiff` | stdio (+ HTTP only with `MCP_HTTP_EXPOSE_RAW=true`) | git diff di un file di `raw/` rispetto alla versione col checksum registrato in `sources.md` (`sinceChecksum`); richiede `raw/` versionato in git, esegue `git` via `execFile` |
 | `wikiChecksum` | `fileChecksum` | stdio (+ HTTP only with `MCP_HTTP_EXPOSE_RAW=true`) | dedup check for the ingest workflow; also checks `raw/`, so it is gated like the source tools |
 | `wikiGraph` | `getGraph` | stdio + HTTP | slug -> list of linked slugs |
-| `wikiStatus` | `getStatus` | stdio + HTTP | page counts by `tipo`/`stato`, last-updated date |
+| `wikiStatus` | `getStatus` | stdio + HTTP | page counts by `tipo`/`stato`, last-updated date; optional `source` (short SHA + ISO date of HEAD, last-sync time from `FETCH_HEAD` mtime) from `src/wiki/freshness.ts`, absent when `WIKI_PATH` is not in a git repo |
 
 ## Environment variables
 
@@ -71,6 +72,8 @@ npm run format:check         # verify formatting without writing
 - `MCP_HTTP_EXPOSE_RAW` — read only by `src/server.ts` at load. Exactly `true` mounts the source tools on the HTTP server; anything else (including `1` or `TRUE`) leaves them out. Covered by `tests/remote-tools.test.ts`.
 - `WIKI_TZ` — optional IANA timezone (e.g. `Europe/Rome`) used to format mtime-derived dates consistently regardless of the host machine's local timezone.
 - `MCP_HTTP_PORT` — HTTP transport port, default `3000`.
+- `MCP_HTTP_HOST` — HTTP bind address, default `127.0.0.1` (loopback only). Set `0.0.0.0` to listen on all interfaces (e.g. in a container).
+- `MCP_HTTP_RATE_LIMIT_MAX` / `MCP_HTTP_RATE_LIMIT_WINDOW_SECONDS` — failed-auth rate limit per IP, defaults `10` / `60`. Invalid values fall back to the defaults.
 - `MCP_HTTP_TOKEN` — required for `src/http.ts`; process refuses to start without it.
 
 ## The wiki content is external and domain-specific

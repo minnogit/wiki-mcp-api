@@ -8,6 +8,7 @@ import matter from 'gray-matter'
 import lockfile from 'proper-lockfile'
 import { z } from 'zod'
 import { rankPages, substringMatches, type RankedPage } from './search-index.js'
+import { getWikiSource, type WikiSource } from './freshness.js'
 
 const execFileAsync = promisify(execFile)
 
@@ -80,6 +81,8 @@ export interface WikiStatus {
   byTipo: Record<string, number>
   byStato: Record<string, number>
   lastUpdated: string
+  /** presente solo se la wiki sta dentro un checkout git leggibile */
+  source?: WikiSource
 }
 
 function extractTitle(content: string, filePath: string): string {
@@ -560,5 +563,8 @@ export async function getStatus(): Promise<WikiStatus> {
     const updated = a && DATE_RE.test(a) ? a : p.updatedAt
     if (updated > lastUpdated) lastUpdated = updated
   }
-  return { totalPages: pages.length, byTipo, byStato, lastUpdated }
+  const status: WikiStatus = { totalPages: pages.length, byTipo, byStato, lastUpdated }
+  const source = await getWikiSource(WIKI_DIR)
+  if (source) status.source = source
+  return status
 }

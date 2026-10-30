@@ -18,7 +18,7 @@ Il server è domain-agnostic: il contenuto della wiki e il dominio che documenta
 | `wikiRawDiff` | Mostra cosa è cambiato in un file sorgente rispetto alla versione già ingerita, via git (sola lettura) |
 | `wikiChecksum` | Calcola il checksum di un file |
 | `wikiGraph` | Restituisce il grafo dei collegamenti tra pagine |
-| `wikiStatus` | Stato generale della wiki |
+| `wikiStatus` | Stato generale della wiki: conteggi, ultimo aggiornamento e, se la wiki è in un checkout git, freschezza della copia servita (`source`: SHA breve e data del commit HEAD, ora dell'ultimo fetch/pull) |
 
 ## Setup del progetto
 
@@ -113,6 +113,8 @@ I tool sulle sorgenti (`wikiListRaw`, `wikiReadRaw`, `wikiRawDiff`, `wikiChecksu
 Configura in `.env`:
 
 - `MCP_HTTP_PORT` — porta di ascolto (default `3000`)
+- `MCP_HTTP_HOST` — indirizzo di ascolto (default `127.0.0.1`, solo loopback). Per raggiungere il server da un'altra macchina o da fuori da un container imposta `0.0.0.0` (o l'IP di una specifica interfaccia), preferibilmente dietro un reverse proxy con TLS. Il log di avvio riporta l'indirizzo effettivo.
+- `MCP_HTTP_RATE_LIMIT_MAX` / `MCP_HTTP_RATE_LIMIT_WINDOW_SECONDS` — rate limit per IP sulle richieste con token errato o mancante: superati `MCP_HTTP_RATE_LIMIT_MAX` fallimenti (default `10`) nella finestra (default `60` secondi) il server risponde `429` con `Retry-After`, anche se la richiesta successiva avesse il token giusto, finché la finestra non scade. Il contatore è in memoria e per IP del peer: dietro un reverse proxy tutti i client risultano lo stesso IP (`X-Forwarded-For` non viene considerato), quindi conviene limitare anche sul proxy.
 - `MCP_HTTP_TOKEN` — token Bearer richiesto per autenticare le richieste; il processo si rifiuta di avviarsi se assente. Genera un valore casuale, es. `openssl rand -hex 32`.
 - `MCP_HTTP_EXPOSE_RAW` — se vale esattamente `true` monta in HTTP anche i tool sulle sorgenti (default: non montati). All'avvio il server dice se sono esposti.
 
@@ -123,7 +125,9 @@ npm run dev:http     # sviluppo (tsx)
 npm run build && npm run start:http   # produzione
 ```
 
-Il server ascolta su `http://<host>:<porta>/mcp` e richiede l'header `Authorization: Bearer <MCP_HTTP_TOKEN>` su ogni richiesta.
+Il server ascolta su `http://<host>:<porta>/mcp` e richiede l'header `Authorization: Bearer <MCP_HTTP_TOKEN>` su ogni richiesta (confronto a tempo costante).
+
+`GET /healthz` non richiede autenticazione e risponde `200` con `{"status":"ok"}`, senza contenuti della wiki né versioni: serve agli healthcheck (Docker, load balancer). Non passa dal server MCP e non è soggetto al rate limit.
 
 Per l'esposizione su internet (non solo rete privata/VPN) metti un reverse proxy con TLS davanti (es. Caddy, nginx, Cloudflare Tunnel) — questo server non gestisce HTTPS direttamente.
 

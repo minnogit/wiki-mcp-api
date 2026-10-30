@@ -1,8 +1,12 @@
 import 'dotenv/config'
 import http from 'node:http'
+import { FailureRateLimiter, createRequestHandler, rateLimitFromEnv } from './http-auth.js'
 import { rawOverHttp, remoteServer } from './server.js'
 
 const PORT = Number(process.env.MCP_HTTP_PORT ?? 3000)
+// Di default solo loopback: per esporre il server serve sceglierlo (es. 0.0.0.0
+// in un container, o un reverse proxy locale davanti).
+const HOST = process.env.MCP_HTTP_HOST || '127.0.0.1'
 const HTTP_PATH = '/mcp'
 const TOKEN = process.env.MCP_HTTP_TOKEN
 
@@ -13,41 +17,17 @@ if (!TOKEN) {
   process.exit(1)
 }
 
-function isAuthorized(req: http.IncomingMessage): boolean {
-  const header = req.headers.authorization ?? ''
-  const [scheme, value] = header.split(' ')
-  return scheme === 'Bearer' && value === TOKEN
-}
-
-async function handleRequest(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
-  const url = new URL(req.url ?? '', `http://${req.headers.host ?? 'localhost'}`)
-
-  if (url.pathname !== HTTP_PATH) {
-    res.writeHead(404).end('Not found')
-    return
-  }
-
-  if (!isAuthorized(req)) {
-    res
-      .writeHead(401, { 'Content-Type': 'application/json' })
-      .end(JSON.stringify({ error: 'unauthorized' }))
-    return
-  }
-
-  try {
-    await remoteServer.startHTTP({ url, httpPath: HTTP_PATH, req, res })
-  } catch (error) {
-    console.error('Errore gestione richiesta MCP HTTP:', error)
-    if (!res.headersSent) {
-      res.writeHead(500).end('Internal server error')
-    }
-  }
-}
+const handleRequest = createRequestHandler({
+  token: TOKEN,
+  httpPath: HTTP_PATH,
+  limiter: new FailureRateLimiter(rateLimitFromEnv()),
+  mcp: (url, req, res) => remoteServer.startHTTP({ url, httpPath: HTTP_PATH, req, res }),
+})
 
 const httpServer = http.createServer((req, res) => void handleRequest(req, res))
 
-httpServer.listen(PORT, () => {
-  console.log(`MCP wiki server (read-only) in ascolto su http://localhost:${PORT}${HTTP_PATH}`)
+httpServer.listen(PORT, HOST, () => {
+  console.log(`MCP wiki server (read-only) in ascolto su http://${HOST}:${PORT}${HTTP_PATH}`)
   console.log(
     rawOverHttp
       ? 'ATTENZIONE: MCP_HTTP_EXPOSE_RAW=true, i tool sulle sorgenti (raw/) sono esposti a chi ha il token.'
