@@ -7,6 +7,7 @@ import { promisify } from 'node:util'
 import matter from 'gray-matter'
 import lockfile from 'proper-lockfile'
 import { z } from 'zod'
+import { rankPages, substringMatches, type RankedPage } from './search-index.js'
 import { getWikiSource, type WikiSource } from './freshness.js'
 
 const execFileAsync = promisify(execFile)
@@ -82,116 +83,6 @@ export interface WikiStatus {
   lastUpdated: string
   /** presente solo se la wiki sta dentro un checkout git leggibile */
   source?: WikiSource
-}
-
-const STOPWORDS = new Set([
-  'di',
-  'a',
-  'da',
-  'in',
-  'con',
-  'su',
-  'per',
-  'tra',
-  'fra',
-  'il',
-  'lo',
-  'la',
-  'i',
-  'gli',
-  'le',
-  'un',
-  'uno',
-  'una',
-  'del',
-  'dello',
-  'della',
-  'dei',
-  'degli',
-  'delle',
-  'al',
-  'allo',
-  'alla',
-  'ai',
-  'agli',
-  'alle',
-  'dal',
-  'dallo',
-  'dalla',
-  'dai',
-  'dagli',
-  'dalle',
-  'nel',
-  'nello',
-  'nella',
-  'nei',
-  'negli',
-  'nelle',
-  'che',
-  'e',
-  'o',
-  'ma',
-  'se',
-  'come',
-  'anche',
-  'non',
-  'più',
-  'meno',
-  'si',
-  'ci',
-  'ne',
-  'è',
-])
-
-function tokenize(text: string): string[] {
-  const matches = text.toLowerCase().match(/[a-zà-ÿ0-9]+/g) ?? []
-  return matches.filter((t) => t.length > 1 && !STOPWORDS.has(t))
-}
-
-function termCounts(tokens: string[]): Map<string, number> {
-  const counts = new Map<string, number>()
-  for (const t of tokens) counts.set(t, (counts.get(t) ?? 0) + 1)
-  return counts
-}
-
-const FIELD_WEIGHTS = { title: 4, tags: 3, content: 1 }
-
-function scorePage(
-  page: Page,
-  queryTerms: string[],
-  docFreq: Map<string, number>,
-  corpusSize: number,
-): number {
-  const titleCounts = termCounts(tokenize(page.title))
-  const tagCounts = termCounts(tokenize(page.frontmatter.tags.join(' ')))
-  const contentCounts = termCounts(tokenize(page.content))
-
-  let score = 0
-  for (const term of queryTerms) {
-    const df = docFreq.get(term) ?? 0
-    if (df === 0) continue
-    const idf = Math.log(1 + corpusSize / df)
-    const tf =
-      FIELD_WEIGHTS.title * (titleCounts.get(term) ?? 0) +
-      FIELD_WEIGHTS.tags * (tagCounts.get(term) ?? 0) +
-      FIELD_WEIGHTS.content * (contentCounts.get(term) ?? 0)
-    score += tf * idf
-  }
-  return score
-}
-
-const SNIPPET_CONTEXT_CHARS = 60
-
-function buildSnippet(content: string, terms: string[]): string | undefined {
-  if (terms.length === 0) return undefined
-  const escaped = terms.map((t) => t.replace(/[.*+?^${}()|[\]\\]/g, String.raw`\$&`))
-  const match = new RegExp(`(${escaped.join('|')})`, 'i').exec(content)
-  if (!match) return undefined
-
-  const start = Math.max(0, match.index - SNIPPET_CONTEXT_CHARS)
-  const end = Math.min(content.length, match.index + match[0].length + SNIPPET_CONTEXT_CHARS)
-  const body = content.slice(start, end).replace(/\s+/g, ' ').trim()
-  return (start > 0 ? '…' : '') + body + (end < content.length ? '…' : '')
 }
 
 function extractTitle(content: string, filePath: string): string {
@@ -369,38 +260,18 @@ export async function searchPages(opts: SearchOpts): Promise<PageMeta[]> {
 
   if (!opts.q) return filtered.slice(0, topK).map(({ content, links, ...meta }) => meta)
 
-  const queryTerms = [...new Set(tokenize(opts.q))]
+  const toMeta = ({ page, snippet }: RankedPage<Page>, score?: number): PageMeta => {
+    const { content, links, ...meta } = page
+    return { ...meta, ...(score === undefined ? {} : { score }), snippet }
+  }
 
-  if (queryTerms.length === 0) {
-    // query senza token utili (es. solo stopword/simboli): fallback a substring match
-    const q = opts.q.toLowerCase()
-    return filtered
-      .filter((p) =>
-        [p.title, p.content, ...(p.frontmatter.tags ?? [])].join(' ').toLowerCase().includes(q),
-      )
+  const ranked = rankPages(allPages, filtered, opts.q)
+  // query senza token utili (es. solo stopword/simboli): fallback a substring match
+  if (!ranked)
+    return substringMatches(filtered, opts.q)
       .slice(0, topK)
-      .map((p) => ({ ...p, snippet: buildSnippet(p.content, [q]) }))
-      .map(({ content, links, ...meta }) => meta)
-  }
-
-  const docFreq = new Map<string, number>()
-  for (const p of allPages) {
-    const tokens = new Set(tokenize([p.title, p.frontmatter.tags.join(' '), p.content].join(' ')))
-    for (const term of queryTerms) {
-      if (tokens.has(term)) docFreq.set(term, (docFreq.get(term) ?? 0) + 1)
-    }
-  }
-
-  return filtered
-    .map((p) => ({
-      ...p,
-      score: scorePage(p, queryTerms, docFreq, allPages.length),
-      snippet: buildSnippet(p.content, queryTerms),
-    }))
-    .filter((p) => p.score > 0)
-    .sort((a, b) => b.score - a.score)
-    .slice(0, topK)
-    .map(({ content, links, ...meta }) => meta)
+      .map((r) => toMeta(r))
+  return ranked.slice(0, topK).map((r) => toMeta(r, r.score))
 }
 
 const RESERVED_ROOT_FILES = new Set(['index.md', 'log.md', 'sources.md', 'overview.md'])
