@@ -1,0 +1,15 @@
+[Unit]
+Description=Sincronizzazione periodica del checkout della wiki
+Documentation=https://github.com/minnogit/wiki-mcp-api/blob/main/deploy/README.md
+
+[Timer]
+OnBootSec=30s
+# Tempo di attesa dalla FINE della sincronizzazione precedente: niente sovrapposizioni.
+OnUnitInactiveSec=90s
+# Jitter, per non martellare il remoto con più server allineati.
+RandomizedDelaySec=20s
+AccuracySec=5s
+Unit=wiki-sync.service
+
+[Install]
+WantedBy=timers.target

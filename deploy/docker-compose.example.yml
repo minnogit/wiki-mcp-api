@@ -1,0 +1,53 @@
+# Esempio: server MCP HTTP + sidecar che sincronizza la wiki da git.
+# Copia in docker-compose.yml, adatta i valori e avvia con `docker compose up -d`.
+#
+# Prerequisiti accanto a questo file:
+#   - .env.mcp     con almeno MCP_HTTP_TOKEN (e, se vuoi, WIKI_DOMAIN, WIKI_TZ)
+#   - deploy_key   deploy key SSH di SOLA LETTURA del repo della wiki (chmod 600,
+#                  leggibile dall'utente uid 1000 «node» del container)
+#
+# Il volume «wiki-checkout» è scritto solo dal sidecar; il server lo monta in sola lettura.
+
+services:
+  sync:
+    build:
+      context: ..
+      target: sync
+    restart: unless-stopped
+    environment:
+      WIKI_REPO_URL: git@github.com:ORGANIZZAZIONE/wiki-privata.git
+      WIKI_BRANCH: main
+      WIKI_SSH_KEY: /run/secrets/deploy_key
+      # WIKI_INCLUDE_RAW: "true"   # porta anche raw/ (serve solo con MCP_HTTP_EXPOSE_RAW=true)
+      WIKI_SYNC_INTERVAL: "90"
+    secrets:
+      - deploy_key
+    volumes:
+      - wiki-checkout:/data
+
+  mcp:
+    build:
+      context: ..
+    restart: unless-stopped
+    depends_on:
+      - sync
+    env_file:
+      - .env.mcp
+    # Dentro il container ascolta su 0.0.0.0, ma la porta è pubblicata solo su
+    # loopback: l'accesso da fuori passa dal reverse proxy con TLS.
+    ports:
+      - "127.0.0.1:3000:3000"
+    volumes:
+      - wiki-checkout:/data:ro
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+
+secrets:
+  deploy_key:
+    file: ./deploy_key
+
+volumes:
+  wiki-checkout:

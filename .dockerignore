@@ -1,0 +1,13 @@
+node_modules
+dist
+.env
+.env.*
+.git
+.github
+_bmad
+_bmad-output
+.claude
+.vscode
+wiki
+raw
+*.log

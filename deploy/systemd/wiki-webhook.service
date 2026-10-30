@@ -1,0 +1,37 @@
+[Unit]
+Description=Receiver del webhook GitHub che accelera la sincronizzazione della wiki
+Documentation=https://github.com/minnogit/wiki-mcp-api/blob/main/deploy/README.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=wikisync
+Group=wikisync
+StateDirectory=wiki-mcp
+StateDirectoryMode=0755
+UMask=0022
+Environment=HOME=/var/lib/wiki-mcp
+# Variabili di sync-wiki.sh: il receiver le passa al processo figlio.
+EnvironmentFile=/etc/wiki-mcp/sync.env
+# WEBHOOK_SECRET, WEBHOOK_BRANCH, WEBHOOK_PORT (vedi deploy/README.md)
+EnvironmentFile=/etc/wiki-mcp/webhook.env
+ExecStart=/usr/bin/node /opt/wiki-mcp-api/deploy/webhook/webhook-sync.mjs
+Restart=on-failure
+RestartSec=5s
+
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+LockPersonality=true
+CapabilityBoundingSet=
+
+[Install]
+WantedBy=multi-user.target

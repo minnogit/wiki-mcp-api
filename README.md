@@ -127,6 +127,8 @@ Il server ascolta su `http://<host>:<porta>/mcp` e richiede l'header `Authorizat
 
 Per l'esposizione su internet (non solo rete privata/VPN) metti un reverse proxy con TLS davanti (es. Caddy, nginx, Cloudflare Tunnel) — questo server non gestisce HTTPS direttamente.
 
+Per far girare il server su una macchina Linux (systemd o Docker) e tenere la wiki aggiornata da git, con reverse proxy TLS e webhook opzionale, vedi [`deploy/README.md`](deploy/README.md).
+
 Un agente **remoto** configura l'endpoint HTTP con il token; un agente **locale** continua a usare solo la configurazione stdio (vedi sopra), che include già lettura e scrittura — non serve configurare entrambi i trasporti sulla stessa macchina.
 
 ## Licenza
