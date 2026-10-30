@@ -81,7 +81,9 @@ describe('avvio con proposals', () => {
       ...env.fx.svc.context,
       proposals: { ...env.config, tokenEnv: 'WIKI_GH' },
     })
-    expect(() => createProposerFromConfig(svc2, { GITHUB_TOKEN: 'fakegh_x' }, tel)).toThrow(/WIKI_GH/)
+    expect(() => createProposerFromConfig(svc2, { GITHUB_TOKEN: 'fakegh_x' }, tel)).toThrow(
+      /WIKI_GH/,
+    )
   })
 
   it('il tool è montato solo con un proposer: senza proposals non esiste per quella wiki', async () => {
