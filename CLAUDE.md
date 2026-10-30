@@ -62,7 +62,7 @@ npm run format:check         # verify formatting without writing
 | `wikiRawDiff` | `rawDiff` | stdio (+ HTTP only with `MCP_HTTP_EXPOSE_RAW=true`) | git diff di un file di `raw/` rispetto alla versione col checksum registrato in `sources.md` (`sinceChecksum`); richiede `raw/` versionato in git, esegue `git` via `execFile` |
 | `wikiChecksum` | `fileChecksum` | stdio (+ HTTP only with `MCP_HTTP_EXPOSE_RAW=true`) | dedup check for the ingest workflow; also checks `raw/`, so it is gated like the source tools |
 | `wikiGraph` | `getGraph` | stdio + HTTP | slug -> list of linked slugs |
-| `wikiStatus` | `getStatus` | stdio + HTTP | page counts by `tipo`/`stato`, last-updated date |
+| `wikiStatus` | `getStatus` | stdio + HTTP | page counts by `tipo`/`stato`, last-updated date; optional `source` (short SHA + ISO date of HEAD, last-sync time from `FETCH_HEAD` mtime) from `src/wiki/freshness.ts`, absent when `WIKI_PATH` is not in a git repo |
 
 ## Environment variables
 
