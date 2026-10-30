@@ -18,7 +18,7 @@ Il server è domain-agnostic: il contenuto della wiki e il dominio che documenta
 | `wikiRawDiff` | Mostra cosa è cambiato in un file sorgente rispetto alla versione già ingerita, via git (sola lettura) |
 | `wikiChecksum` | Calcola il checksum di un file |
 | `wikiGraph` | Restituisce il grafo dei collegamenti tra pagine |
-| `wikiStatus` | Stato generale della wiki |
+| `wikiStatus` | Stato generale della wiki: conteggi, ultimo aggiornamento e, se la wiki è in un checkout git, freschezza della copia servita (`source`: SHA breve e data del commit HEAD, ora dell'ultimo fetch/pull) |
 
 ## Setup del progetto
 
