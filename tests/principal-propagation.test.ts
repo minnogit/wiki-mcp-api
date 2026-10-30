@@ -137,12 +137,14 @@ describe('propagazione del Principal dentro i tool (end-to-end con @mastra/mcp)'
       user: 'alice',
       groups: ['hr'],
       wikis: ['hr'],
+      propose: [],
     })
     expect(await callWhoami(url, 'tok-bob', sb)).toEqual({
       id: 'bob-1',
       user: 'bob',
       groups: [],
       wikis: '*',
+      propose: [],
     })
   })
 

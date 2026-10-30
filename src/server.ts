@@ -14,18 +14,31 @@ import { wikiRawDiffTool } from './tools/raw-diff.js'
 import { wikiChecksumTool } from './tools/checksum.js'
 import { wikiGraphTool } from './tools/graph.js'
 import { wikiStatusTool } from './tools/status.js'
+import { wikiProposePageTool } from './tools/propose-page.js'
+import type { Proposer } from './proposals.js'
 
-// Tool di sola lettura: sono gli unici esposti al server HTTP remoto (src/http.ts).
-// I tool di scrittura (wikiWritePage, wikiAppendLog) restano disponibili solo via stdio locale.
-// Questa è una scelta di design deliberata, non solo lo stato attuale: la scrittura via
-// stdio presuppone un clone locale della wiki, che dà gratis due garanzie che il codice
-// non fornisce altrimenti — attribuzione (il commit è di chi esegue l'agente, con la sua
-// identità git) e un checkpoint umano (il diff viene rivisto prima del commit). Un client
-// HTTP/remoto non ha né l'uno né l'altro: il lock su singolo file (proper-lockfile) evita
-// solo la corruzione concorrente, non risolve conflitti tra scritture di utenti diversi, e
-// nessun tool esegue mai commit. Se in futuro si vuole abilitare scrittura remota, queste
-// garanzie vanno reintrodotte esplicitamente (auth per-utente, attribuzione, strategia di
-// commit/review) prima di spostare un tool di scrittura in buildRemoteServer.
+// Tool di sola lettura: sono gli unici esposti al server HTTP remoto (src/http.ts) senza
+// ulteriore configurazione. I tool di scrittura immediata (wikiWritePage, wikiAppendLog) restano disponibili solo via stdio
+// locale. Questa è una scelta di design deliberata: la scrittura via stdio presuppone un clone
+// locale della wiki, che dà gratis due garanzie che il codice non fornisce altrimenti —
+// attribuzione (il commit è di chi esegue l'agente, con la sua identità git) e un checkpoint
+// umano (il diff viene rivisto prima del commit). Un client HTTP/remoto non le ha, quindi NON
+// scrive mai sulla wiki servita: il lock su singolo file (proper-lockfile) evita solo la
+// corruzione concorrente, non risolve conflitti tra utenti diversi, e nessun tool esegue commit
+// sul clone servito.
+//
+// La scrittura remota esiste, ma solo come proposta (wikiProposePage, src/proposals.ts), montata
+// in buildRemoteServer solo per le wiki che configurano `proposals`, e le tre garanzie sono
+// riprodotte così:
+// - attribuzione: l'identità per-utente del token (Principal, permesso esplicito `propose`) finisce
+//   nel trailer `Proposed-by` del commit e nel corpo della PR (il commit è del bot, ma il
+//   proponente è sempre riconoscibile, e nell'audit);
+// - checkpoint umano: il tool apre una pull request e si ferma lì; la rivede una persona, che è
+//   anche l'unica a poterla unire (branch protection/CODEOWNERS sul repo della wiki);
+// - strategia di commit: un branch per proposta (`proposta/...`), un commit del bot, nessun
+//   merge automatico; il sync esistente (deploy/) porta poi la modifica al server.
+// Un tool di scrittura nuovo non va spostato in buildRemoteServer: o passa da questo flusso
+// (PR rivista da una persona), o resta solo su stdio.
 //
 // I tool di sola lettura si dividono in due gruppi. Quelli sulle pagine leggono solo wiki/.
 // Quelli sulle sorgenti toccano raw/: servono all'INGEST, che è un lavoro locale, e da remoto
@@ -80,7 +93,10 @@ const DEFAULT_DOMAIN_LINE =
 // è la chiave, non il campo `id` del tool, a diventare il nome esposto via MCP.
 // `sources` dice se i tool sulle sorgenti sono disponibili: senza, l'INGEST e le regole su raw/
 // non vanno descritti al client, che non potrebbe seguirli.
-function buildInstructions(domain: string | undefined, { sources }: { sources: boolean }): string {
+function buildInstructions(
+  domain: string | undefined,
+  { sources, proposals = false }: { sources: boolean; proposals?: boolean },
+): string {
   return [
     domain ?? DEFAULT_DOMAIN_LINE,
     '',
@@ -98,6 +114,12 @@ function buildInstructions(domain: string | undefined, { sources }: { sources: b
     '- wikiWritePage valida il frontmatter (tipo/tags/fonti/aggiornato/stato); index.md, log.md, sources.md e overview.md ne sono esenti',
     ...(sources ? ['- wikiReadRaw e wikiRawDiff sono read-only'] : []),
     '- I path delle pagine sono relativi alla wiki dir (es. "concetti/verbale.md")',
+    ...(proposals
+      ? [
+          "- wikiProposePage NON modifica la wiki: apre una pull request nel repository, che una persona rivede e unisce; la modifica compare qui solo dopo il merge e la sincronizzazione. Usalo quando devi creare o correggere una pagina: rileggi prima la pagina (wikiReadPage), proponi il contenuto COMPLETO con frontmatter valido e una motivazione breve. Riporta all'utente l'URL della PR (prUrl) e dì che è in attesa di revisione, non che la modifica è stata applicata",
+          '- con wikiProposePage non puoi cambiare visibilita/gruppi di una pagina esistente, né proporre pagine riservate che non puoi leggere; i file index.md, log.md, sources.md e overview.md non sono proponibili; ci sono limiti di frequenza per utente',
+        ]
+      : []),
     '- alcune pagine possono essere riservate ad altri gruppi (frontmatter visibilita/gruppi): se non sono permesse al tuo accesso non compaiono in nessun tool e wikiReadPage risponde come per una pagina inesistente',
   ].join('\n')
 }
@@ -158,7 +180,9 @@ export function buildServer(svc: WikiService, tel: Telemetry = processTelemetry(
 }
 
 // Server di sola lettura, esposto via HTTP per l'accesso remoto (src/http.ts), uno per wiki.
-// Non include wikiWritePage/wikiAppendLog: la scrittura resta possibile solo in locale.
+// Non include wikiWritePage/wikiAppendLog: la scrittura immediata resta possibile solo in locale.
+// Con `proposer` (la wiki ha `proposals` e il token GitHub) monta anche wikiProposePage, che non
+// scrive ma apre una pull request da rivedere (vedi il commento di design in cima).
 // Senza MCP_HTTP_EXPOSE_RAW (o se la wiki non ha rawDir) non include nemmeno i tool sulle
 // sorgenti. `exposeRaw` è esplicito per i test; di default si legge l'ambiente.
 export function buildRemoteServer(
@@ -166,7 +190,8 @@ export function buildRemoteServer(
   {
     exposeRaw = rawOverHttp(),
     telemetry: tel = processTelemetry(),
-  }: { exposeRaw?: boolean; telemetry?: Telemetry } = {},
+    proposer,
+  }: { exposeRaw?: boolean; telemetry?: Telemetry; proposer?: Proposer } = {},
 ): MCPServer {
   const sources = exposeRaw && svc.context.rawDir !== undefined
   const { suffixId, suffixName } = labels(svc)
@@ -175,16 +200,21 @@ export function buildRemoteServer(
     name: `LLM Wiki MCP Server (read-only)${suffixName}`,
     version: '0.1.0',
     description: 'Ponte MCP di sola lettura verso una wiki di dominio in markdown',
-    instructions: `${buildInstructions(svc.context.domain, { sources })}\n\n${
+    instructions: `${buildInstructions(svc.context.domain, { sources, proposals: proposer !== undefined })}\n\n${
       sources
         ? 'Questa istanza è di sola lettura: wikiWritePage e wikiAppendLog non sono disponibili qui.'
         : 'Questa istanza è di sola lettura e serve solo le pagine della wiki: wikiWritePage, wikiAppendLog e i tool sulle sorgenti (wikiListRaw, wikiReadRaw, wikiRawDiff, wikiChecksum) non sono disponibili qui.'
+    }${
+      proposer
+        ? ' Le modifiche si possono solo proporre con wikiProposePage (pull request da rivedere), mai applicare direttamente.'
+        : ''
     }`,
     tools: audited(
       svc,
       {
         ...wikiReadTools(svc),
         ...(sources ? sourceTools(svc) : {}),
+        ...(proposer ? { wikiProposePage: wikiProposePageTool(proposer) } : {}),
       },
       tel,
     ),

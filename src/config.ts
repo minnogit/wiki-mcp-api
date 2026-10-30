@@ -23,6 +23,127 @@ function isValidTimeZone(tz: string): boolean {
   }
 }
 
+/** Valori predefiniti delle proposte di modifica (vedi `ProposalsConfig`). */
+export const PROPOSAL_DEFAULTS = {
+  baseBranch: 'main',
+  pathPrefix: 'wiki/',
+  tokenEnv: 'GITHUB_TOKEN',
+  botName: 'wiki-mcp-bot',
+  botEmail: 'wiki-mcp-bot@users.noreply.github.com',
+  apiUrl: 'https://api.github.com',
+  maxContentChars: 100_000,
+  maxRationaleChars: 1000,
+  maxOpenPulls: 20,
+  rateLimitMax: 10,
+  rateLimitWindowSeconds: 3600,
+} as const
+
+// Un solo carattere di controllo (newline compresi) in questi campi finirebbe in un'intestazione,
+// in un'autorità di commit o in un ref git: si accettano solo forme semplici.
+const REPO_RE = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/
+const BRANCH_RE = /^[A-Za-z0-9][A-Za-z0-9._/-]*$/
+const ENV_NAME_RE = /^[A-Za-z_][A-Za-z0-9_]*$/
+const NO_CONTROL = /^[^\u0000-\u001f\u007f<>]+$/
+
+function isLoopbackHost(host: string): boolean {
+  return host === 'localhost' || host === '127.0.0.1' || host === '[::1]'
+}
+
+// Con `apiUrl` si può puntare a GitHub Enterprise o a un finto server di prova; il token viaggia
+// nell'intestazione Authorization, quindi in chiaro (http) solo verso il loopback.
+function validApiUrl(value: string): boolean {
+  try {
+    const url = new URL(value)
+    if (url.username || url.password) return false
+    return url.protocol === 'https:' || (url.protocol === 'http:' && isLoopbackHost(url.hostname))
+  } catch {
+    return false
+  }
+}
+
+const PROPOSALS_SCHEMA = z
+  .object({
+    repo: z.string().regex(REPO_RE, 'deve avere la forma "proprietario/nome"'),
+    baseBranch: z
+      .string()
+      .regex(BRANCH_RE, 'non è un nome di branch valido')
+      .refine(
+        (v) => !v.includes('..') && !v.endsWith('/') && !v.endsWith('.lock'),
+        'nome non valido',
+      )
+      .default(PROPOSAL_DEFAULTS.baseBranch),
+    // Cartella della wiki dentro il repo ("" se le pagine stanno nella radice).
+    pathPrefix: z
+      .string()
+      .default(PROPOSAL_DEFAULTS.pathPrefix)
+      .transform((v) =>
+        v
+          .trim()
+          .replace(/^\.\/+/, '')
+          .replace(/^\/+/, ''),
+      )
+      .refine((v) => !v.split('/').some((seg) => seg === '..'), 'non può contenere ".."')
+      .refine((v) => /^[A-Za-z0-9._/-]*$/.test(v), 'può contenere solo lettere, cifre, . _ - e /')
+      .transform((v) => (v === '' || v === '.' ? '' : v.replace(/\/+$/, '') + '/')),
+    tokenEnv: z
+      .string()
+      .regex(ENV_NAME_RE, "è il NOME di una variabile d'ambiente, non il token")
+      .default(PROPOSAL_DEFAULTS.tokenEnv),
+    botName: z
+      .string()
+      .min(1)
+      .max(100)
+      .regex(NO_CONTROL, 'caratteri non ammessi')
+      .default(PROPOSAL_DEFAULTS.botName),
+    botEmail: z
+      .string()
+      .min(3)
+      .max(200)
+      .regex(NO_CONTROL, 'caratteri non ammessi')
+      .default(PROPOSAL_DEFAULTS.botEmail),
+    labels: z
+      .array(z.string().min(1).max(50).regex(NO_CONTROL, 'caratteri non ammessi'))
+      .max(10)
+      .default([]),
+    apiUrl: z
+      .string()
+      .refine(
+        validApiUrl,
+        'deve essere un URL https (http solo verso localhost), senza credenziali',
+      )
+      .transform((v) => v.replace(/\/+$/, ''))
+      .default(PROPOSAL_DEFAULTS.apiUrl),
+    maxContentChars: z
+      .number()
+      .int()
+      .min(100)
+      .max(900_000)
+      .default(PROPOSAL_DEFAULTS.maxContentChars),
+    maxRationaleChars: z
+      .number()
+      .int()
+      .min(10)
+      .max(5000)
+      .default(PROPOSAL_DEFAULTS.maxRationaleChars),
+    // Tetto alle PR di proposta aperte contemporaneamente (conteggio sul repo, max 100).
+    maxOpenPulls: z.number().int().min(1).max(100).default(PROPOSAL_DEFAULTS.maxOpenPulls),
+    rateLimitMax: z.number().int().min(1).max(1000).default(PROPOSAL_DEFAULTS.rateLimitMax),
+    rateLimitWindowSeconds: z
+      .number()
+      .int()
+      .min(1)
+      .max(86_400)
+      .default(PROPOSAL_DEFAULTS.rateLimitWindowSeconds),
+  })
+  .strict()
+
+/**
+ * Proposte di modifica da remoto per una wiki (campo `proposals` di WIKI_CONFIG), con i valori
+ * predefiniti già applicati. Contiene il NOME della variabile d'ambiente del token GitHub
+ * (`tokenEnv`), mai il token.
+ */
+export type ProposalsConfig = z.output<typeof PROPOSALS_SCHEMA>
+
 // `name` finisce nell'URL (`/mcp/<name>`): niente maiuscole, punti o altro che richieda escape.
 const WIKI_ENTRY_SCHEMA = z
   .object({
@@ -36,6 +157,7 @@ const WIKI_ENTRY_SCHEMA = z
       .string()
       .refine(isValidTimeZone, 'non è un fuso IANA valido (es. "Europe/Rome")')
       .optional(),
+    proposals: PROPOSALS_SCHEMA.optional(),
   })
   .strict()
 
@@ -74,6 +196,7 @@ export function parseWikiConfig(data: unknown, baseDir: string): WikiContext[] {
     rawDir: entry.rawPath ? path.resolve(baseDir, entry.rawPath) : undefined,
     domain: entry.domain?.trim() || undefined,
     tz: entry.tz,
+    ...(entry.proposals ? { proposals: entry.proposals } : {}),
   }))
 }
 

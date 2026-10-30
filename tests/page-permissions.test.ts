@@ -11,6 +11,7 @@ const principal = (id: string, groups: string[]): Principal => ({
   user: id,
   groups,
   wikis: '*',
+  propose: [],
 })
 const hr = principal('anna', ['hr'])
 const fuori = principal('bruno', ['it'])

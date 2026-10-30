@@ -83,6 +83,7 @@ describe('autenticazione', () => {
       user: 'alice',
       groups: ['hr'],
       wikis: ['hr'],
+      propose: [],
     })
     expect(auth.authenticate('tok-bob')?.wikis).toBe('*')
   })

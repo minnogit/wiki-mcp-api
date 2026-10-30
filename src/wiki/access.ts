@@ -76,8 +76,7 @@ const fieldsOf = (s: AccessSubject): AccessFields => ('frontmatter' in s ? s.fro
 export function authorize(
   subject: AccessSubject,
   principal: Principal | undefined,
-  // Oggi lettura e scrittura hanno la stessa regola: la scrittura remota non esiste ancora (la
-  // introduce la PR successiva, che chiamerà `canWrite`). Il parametro c'è perché le due regole
+  // Oggi lettura e scrittura hanno la stessa regola. Il parametro c'è perché le due regole
   // potranno divergere (es. leggere sì, scrivere no) senza cambiare i chiamanti.
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   _action: Action = 'read',
@@ -99,12 +98,25 @@ export function canRead(subject: AccessSubject, principal: Principal | undefined
 }
 
 /**
- * Questo principal può scrivere la pagina? Oggi coincide con `canRead`, e la scrittura da remoto
- * non esiste ancora: la userà la PR successiva (scrittura remota con PR), che dovrà chiamarla
- * prima di accettare una modifica. Su stdio (`principal` `undefined`) è sempre `true`.
+ * Questo principal può scrivere la pagina? Oggi coincide con `canRead`. La usa la proposta di
+ * modifica da remoto (`wikiProposePage`, src/proposals.ts) sia sulla pagina esistente sia sui
+ * campi di accesso del contenuto proposto. Su stdio (`principal` `undefined`) è sempre `true`.
  */
 export function canWrite(subject: AccessSubject, principal: Principal | undefined): boolean {
   return authorize(subject, principal, 'write').allowed
+}
+
+/**
+ * Firma dell'effetto dei campi di accesso: due frontmatter con la stessa firma si comportano allo
+ * stesso modo per ogni principal (`pubblica`, `interna` e assente sono equivalenti; `gruppi` conta
+ * solo con `riservata`, in ordine indifferente). Serve a riconoscere una modifica di
+ * `visibilita`/`gruppi` anche quando il testo del campo cambia senza cambiarne l'effetto.
+ */
+export function accessSignature(subject: AccessSubject): string {
+  const { visibilita, gruppi = [] } = fieldsOf(subject)
+  if (visibilita === undefined || visibilita === 'pubblica' || visibilita === 'interna')
+    return 'aperta'
+  return `riservata:${[...new Set(gruppi)].sort().join(',')}`
 }
 
 /** Predicato per filtrare liste di pagine: `pages.filter(visibleTo(principal))`. */

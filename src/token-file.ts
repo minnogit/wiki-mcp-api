@@ -20,6 +20,8 @@ const ENTRY_SCHEMA = z
       z.literal('*'),
       z.array(z.string().min(1)).min(1, 'elenca almeno una wiki, oppure "*"'),
     ]),
+    // Permesso di proporre modifiche da remoto (wikiProposePage), per wiki. Assente = nessuna.
+    propose: z.union([z.literal('*'), z.array(z.string().min(1))]).optional(),
     tokenHash: z
       .string()
       .regex(HASH_RE, 'deve essere "sha256:" seguito da 64 cifre esadecimali minuscole'),
@@ -51,6 +53,19 @@ const FILE_SCHEMA = z.array(ENTRY_SCHEMA).superRefine((entries, ctx) => {
       })
     }
     hashes.add(entry.tokenHash)
+    // proporre senza poter accedere alla wiki non ha senso: errore esplicito invece di un
+    // permesso che non scatterebbe mai
+    if (Array.isArray(entry.wikis) && Array.isArray(entry.propose)) {
+      for (const w of entry.propose) {
+        if (!entry.wikis.includes(w)) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: [index, 'propose'],
+            message: `la wiki "${w}" non è tra le wikis del token`,
+          })
+        }
+      }
+    }
   })
 })
 
@@ -69,12 +84,15 @@ export function parseTokenFile(data: unknown, wikiNames?: readonly string[]): To
     }
   } else if (wikiNames) {
     result.data.forEach((entry, index) => {
-      if (entry.wikis === '*') return
-      for (const w of entry.wikis) {
-        if (!wikiNames.includes(w)) {
-          problems.push(
-            `${index}.wikis: la wiki "${w}" non esiste (configurate: ${wikiNames.join(', ')})`,
-          )
+      for (const field of ['wikis', 'propose'] as const) {
+        const names = entry[field]
+        if (names === undefined || names === '*') continue
+        for (const w of names) {
+          if (!wikiNames.includes(w)) {
+            problems.push(
+              `${index}.${field}: la wiki "${w}" non esiste (configurate: ${wikiNames.join(', ')})`,
+            )
+          }
         }
       }
     })

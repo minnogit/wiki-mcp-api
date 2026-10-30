@@ -9,6 +9,7 @@ import { buildRemoteServer, rawOverHttp, registerWikiGauge } from './server.js'
 import { createTelemetryFromEnv, setTelemetry, type Telemetry } from './telemetry.js'
 import { safeEqual } from './http-auth.js'
 import { createWikiService } from './wiki/service.js'
+import { createProposerFromConfig, type Proposer } from './proposals.js'
 
 const PORT = Number(process.env.MCP_HTTP_PORT ?? 3000)
 // Di default solo loopback: per esporre il server serve sceglierlo (es. 0.0.0.0
@@ -70,13 +71,23 @@ for (const w of setup.warnings) log.warn('config-warning', { msg: `AVVISO: ${w}`
 // Un MCPServer per wiki, creati una volta all'avvio (non per richiesta): ognuno ha il proprio
 // service, quindi la propria cache, e tiene le proprie sessioni MCP.
 const exposeRaw = rawOverHttp()
-const servers = new Map<string, MCPServer>(
-  wikis.map((ctx) => {
-    const svc = createWikiService(ctx)
-    registerWikiGauge(svc, tel)
-    return [ctx.name, buildRemoteServer(svc, { exposeRaw, telemetry: tel })]
-  }),
-)
+// Una wiki con `proposals` monta anche wikiProposePage: il token GitHub (variabile indicata da
+// `tokenEnv`) deve esserci già ora, altrimenti il tool esisterebbe ma non potrebbe mai funzionare.
+let servers: Map<string, MCPServer>
+try {
+  servers = new Map<string, MCPServer>(
+    wikis.map((ctx) => {
+      const svc = createWikiService(ctx)
+      registerWikiGauge(svc, tel)
+      const proposer: Proposer | undefined = ctx.proposals
+        ? createProposerFromConfig(svc, process.env, tel)
+        : undefined
+      return [ctx.name, buildRemoteServer(svc, { exposeRaw, telemetry: tel, proposer })]
+    }),
+  )
+} catch (error) {
+  fatal(error)
+}
 
 const handleRequest = createRequestHandler({
   auth: setup.authenticator,
@@ -127,6 +138,12 @@ httpServer.listen(PORT, HOST, () => {
       wiki: w.name,
       raw: w.rawDir !== undefined,
     })
+    if (w.proposals) {
+      log.info('route', {
+        msg: `  wikiProposePage attivo: proposte come PR su ${w.proposals.repo} (base ${w.proposals.baseBranch})`,
+        wiki: w.name,
+      })
+    }
   }
   if (wikis.length === 1) {
     log.info('route', {
