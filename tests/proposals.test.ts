@@ -351,7 +351,7 @@ describe('wikiProposePage: errori di GitHub', () => {
     const r = await env.run(alice, OK)
     const msg = failure(r)
     expect(msg).toMatch(/GitHub/)
-    expect(msg).not.toMatch(/SECRET|500|ghp_/)
+    expect(msg).not.toMatch(/SECRET|500|fakegh_/)
     expect(env.fake.requests.some((q) => q.method === 'DELETE')).toBe(true)
     expect([...env.fake.branches.keys()]).toEqual(['main'])
     expect(last(env)).toMatchObject({ outcome: 'error' })
@@ -385,10 +385,10 @@ describe('wikiProposePage: errori di GitHub', () => {
   })
 
   it('token GitHub errato: errore di configurazione senza rivelare il token', async () => {
-    env = await makeProposalEnv({ token: 'ghp_SBAGLIATO_0000' })
+    env = await makeProposalEnv({ token: 'fakegh_SBAGLIATO_0000' })
     const msg = failure(await env.run(alice, OK))
     expect(msg).toMatch(/accedere al repository/)
-    expect(JSON.stringify(env.lines)).not.toContain('ghp_SBAGLIATO_0000')
+    expect(JSON.stringify(env.lines)).not.toContain('fakegh_SBAGLIATO_0000')
   })
 })
 

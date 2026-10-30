@@ -45,7 +45,7 @@ describe('configurazione proposals', () => {
     [{ repo: 'senza-slash' }, /repo/],
     [{ repo: 'a/b', altro: 1 }, /altro|Unrecognized/],
     [{ repo: 'a/b', pathPrefix: '../fuori' }, /pathPrefix/],
-    [{ repo: 'a/b', tokenEnv: 'ghp_abc123 segreto' }, /NOME/],
+    [{ repo: 'a/b', tokenEnv: 'fakegh_abc123 segreto' }, /NOME/],
     [{ repo: 'a/b', apiUrl: 'http://github.example.com' }, /apiUrl/],
     [{ repo: 'a/b', apiUrl: 'https://u:p@example.com' }, /apiUrl/],
     [{ repo: 'a/b', baseBranch: 'a..b' }, /baseBranch/],
@@ -75,13 +75,13 @@ describe('avvio con proposals', () => {
     const { tel } = makeTelemetry()
     expect(() => createProposerFromConfig(svc, {}, tel)).toThrow(ConfigError)
     expect(() => createProposerFromConfig(svc, { GITHUB_TOKEN: '  ' }, tel)).toThrow(/GITHUB_TOKEN/)
-    expect(() => createProposerFromConfig(svc, { GITHUB_TOKEN: 'ghp_x' }, tel)).not.toThrow()
+    expect(() => createProposerFromConfig(svc, { GITHUB_TOKEN: 'fakegh_x' }, tel)).not.toThrow()
     // tokenEnv personalizzato
     const svc2 = createWikiService({
       ...env.fx.svc.context,
       proposals: { ...env.config, tokenEnv: 'WIKI_GH' },
     })
-    expect(() => createProposerFromConfig(svc2, { GITHUB_TOKEN: 'ghp_x' }, tel)).toThrow(/WIKI_GH/)
+    expect(() => createProposerFromConfig(svc2, { GITHUB_TOKEN: 'fakegh_x' }, tel)).toThrow(/WIKI_GH/)
   })
 
   it('il tool è montato solo con un proposer: senza proposals non esiste per quella wiki', async () => {
@@ -143,14 +143,14 @@ describe('avvio con proposals', () => {
       expect(code).toBe(1)
       expect(a.out()).toMatch(/GITHUB_TOKEN/)
       // con token: parte e annuncia il tool, senza stampare il token
-      const b = launch({ GITHUB_TOKEN: 'ghp_SEGRETO_DI_PROVA' })
+      const b = launch({ GITHUB_TOKEN: 'fakegh_SEGRETO_DI_PROVA' })
       const end = Date.now() + 20_000
       while (!b.out().includes('wikiProposePage attivo') && Date.now() < end)
         await new Promise((r) => setTimeout(r, 50))
       b.child.kill('SIGTERM')
       await new Promise((r) => b.child.once('close', r))
       expect(b.out()).toContain('wikiProposePage attivo')
-      expect(b.out()).not.toContain('ghp_SEGRETO_DI_PROVA')
+      expect(b.out()).not.toContain('fakegh_SEGRETO_DI_PROVA')
     } finally {
       fs.rmSync(dir, { recursive: true, force: true })
     }

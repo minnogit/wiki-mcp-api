@@ -56,7 +56,7 @@ export class FakeGitHub {
   url = ''
 
   constructor(opts: { token?: string; repo?: string } = {}) {
-    this.token = opts.token ?? 'ghp_FAKE_TOKEN_for_tests_only_0123456789'
+    this.token = opts.token ?? 'fakegh_FAKE_TOKEN_for_tests_only_0123456789'
     this.repo = opts.repo ?? 'acme/wiki'
     this.branches.set('main', new Map())
     this.branchCommit.set('main', sha1('init'))

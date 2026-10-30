@@ -174,7 +174,7 @@ describe('cliente GitHub contro il finto server', () => {
   })
 
   it('token sbagliato: auth', async () => {
-    const bad = createGitHubClient({ apiUrl: fake.url, token: 'ghp_sbagliato', repo: fake.repo })
+    const bad = createGitHubClient({ apiUrl: fake.url, token: 'fakegh_sbagliato', repo: fake.repo })
     expect(await kindOf(bad.getBranchSha('main'))).toBe('auth')
   })
 })
