@@ -33,7 +33,9 @@ describe('wikiStatus: source (freschezza)', () => {
 
     const st = await fixture.svc.getStatus()
     expect(st.source?.commit).toBe(git(fixture.wikiDir, 'rev-parse', '--short', 'HEAD'))
-    expect(st.source?.commitDate).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[+-]\d{2}:\d{2}$/)
+    expect(st.source?.commitDate).toMatch(
+      /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(Z|[+-]\d{2}:\d{2})$/,
+    )
     // mai fetch: ultimo sync sconosciuto
     expect(st.source?.syncedAt).toBeNull()
     expect(JSON.stringify(st)).not.toContain(fixture.root)
