@@ -5,8 +5,8 @@ import { cleanup, frontmatter, setupService } from './helpers'
 
 let fixture: Awaited<ReturnType<typeof setupService>> | null = null
 
-async function init(files: Record<string, string>) {
-  fixture = await setupService(files)
+function init(files: Record<string, string>, opts: { tz?: string } = {}) {
+  fixture = setupService(files, {}, opts)
   return fixture.svc
 }
 
@@ -17,7 +17,7 @@ afterEach(() => {
 
 describe('getGraph', () => {
   it('costruisce forward, reverse e orphans', async () => {
-    const svc = await init({
+    const svc = init({
       // link con label [[slug|label]] e dedup dei ripetuti
       'a.md': frontmatter() + '# A\n\nVedi [[b]] e ancora [[b|seconda volta]] e [[c]].',
       'b.md': frontmatter() + '# B',
@@ -32,14 +32,14 @@ describe('getGraph', () => {
   })
 
   it('i link rotti compaiono in reverse ma non in forward', async () => {
-    const svc = await init({ 'x.md': frontmatter() + '# X\n\nPunta a [[inesistente]].' })
+    const svc = init({ 'x.md': frontmatter() + '# X\n\nPunta a [[inesistente]].' })
     const g = await svc.getGraph()
     expect(g.forward['inesistente']).toBeUndefined()
     expect(g.reverse['inesistente']).toEqual(['x'])
   })
 
   it('risolve i wikilink per nome verso pagine in sottocartelle, come Obsidian', async () => {
-    const svc = await init({
+    const svc = init({
       'concetti/a.md': frontmatter() + '# A\n\nVedi [[b]] e [[procedure/c]].',
       'procedure/b.md': frontmatter() + '# B\n\nTorna ad [[a]].',
       'procedure/c.md': frontmatter() + '# C',
@@ -62,7 +62,7 @@ describe('getGraph', () => {
 
 describe('getGraph con link markdown (OKF)', () => {
   it('risolve link relativi, rooted, con anchor e li fonde con i wikilink', async () => {
-    const svc = await init({
+    const svc = init({
       'a.md':
         frontmatter() +
         '# A\n\n[b](b.md#sez) [c](/sub/c.md) e [[d]] e [b ancora](./b.md "titolo").',
@@ -81,7 +81,7 @@ describe('getGraph con link markdown (OKF)', () => {
 
 describe('getStatus', () => {
   it('conteggia per tipo e stato, incluse le categorie di default', async () => {
-    const svc = await init({
+    const svc = init({
       'a.md': frontmatter({ tipo: 'concetto', stato: 'bozza' }) + '# A',
       'b.md': frontmatter({ tipo: 'analisi', stato: 'stabile' }) + '# B',
       'log.md': '# log senza frontmatter',
@@ -94,10 +94,10 @@ describe('getStatus', () => {
 
   it('lastUpdated usa la data semantica più recente, non il mtime', async ({}) => {
     const wikiDir =
-      (await init({
+      init({
         'vecchia.md': frontmatter({ aggiornato: '2026-01-01' }) + '# V',
         'recente.md': frontmatter({ aggiornato: '2026-08-22' }) + '# R',
-      })) && fixture!.wikiDir
+      }) && fixture!.wikiDir
     // mtime antichi: se lastUpdated fosse mtime-based, sarebbe 2025
     for (const f of ['vecchia.md', 'recente.md']) {
       fs.utimesSync(
@@ -110,7 +110,7 @@ describe('getStatus', () => {
   })
 
   it('una data YAML non quotata viene letta come YYYY-MM-DD', async () => {
-    const svc = await init({
+    const svc = init({
       'nonquotata.md':
         '---\ntipo: concetto\ntags:\n  - t\nfonti: []\naggiornato: 2026-08-22\nstato: bozza\n---\n# N',
     })
@@ -118,10 +118,7 @@ describe('getStatus', () => {
   })
 
   it('senza date valide nel frontmatter ricade sul mtime', async ({}) => {
-    process.env.WIKI_TZ = 'UTC'
-    const svc = await init({
-      'solo-mtime.md': '# Solo titolo, niente frontmatter valido',
-    })
+    const svc = init({ 'solo-mtime.md': '# Solo titolo, niente frontmatter valido' }, { tz: 'UTC' })
     const wikiDir = fixture!.wikiDir
     fs.utimesSync(
       path.join(wikiDir, 'solo-mtime.md'),
@@ -129,6 +126,5 @@ describe('getStatus', () => {
       new Date('2025-06-10T12:00:00Z'),
     )
     expect((await svc.getStatus()).lastUpdated).toBe('2025-06-10')
-    delete process.env.WIKI_TZ
   })
 })

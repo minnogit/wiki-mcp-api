@@ -1,42 +1,46 @@
 import * as fs from 'node:fs'
 import * as os from 'node:os'
 import * as path from 'node:path'
-import { vi } from 'vitest'
+import { createWikiService, type WikiService } from '../src/wiki/service.js'
 
 export interface Fixture {
-  svc: typeof import('../src/wiki/service.js')
+  svc: WikiService
   root: string
   wikiDir: string
   rawDir: string
 }
 
-// Il service risolve WIKI_PATH/RAW_PATH al load del modulo: ogni file di test imposta
-// le env PRIMA dell'import dinamico e riceve la propria istanza (vitest isola i moduli
-// per file, quindi non ci sono collisioni tra suite).
-export async function setupService(
+// Ogni fixture crea il proprio service (nessuna env, nessuno stato di modulo): le suite
+// possono creare quante wiki vogliono nello stesso processo.
+export function makeService(
+  wikiDir: string,
+  rawDir: string | undefined,
+  opts: { name?: string; tz?: string; domain?: string } = {},
+): WikiService {
+  return createWikiService({ name: opts.name ?? 'test', wikiDir, rawDir, ...opts })
+}
+
+export function writeTree(dir: string, files: Record<string, string>): void {
+  for (const [rel, content] of Object.entries(files)) {
+    const full = path.join(dir, rel)
+    fs.mkdirSync(path.dirname(full), { recursive: true })
+    fs.writeFileSync(full, content)
+  }
+}
+
+export function setupService(
   files: Record<string, string> = {},
   rawFiles: Record<string, string> = {},
-): Promise<Fixture> {
+  opts: { tz?: string } = {},
+): Fixture {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'wiki-mcp-test-'))
   const wikiDir = path.join(root, 'wiki')
   const rawDir = path.join(root, 'raw')
   fs.mkdirSync(wikiDir, { recursive: true })
   fs.mkdirSync(rawDir, { recursive: true })
-  for (const [rel, content] of Object.entries(files)) {
-    const full = path.join(wikiDir, rel)
-    fs.mkdirSync(path.dirname(full), { recursive: true })
-    fs.writeFileSync(full, content)
-  }
-  for (const [name, content] of Object.entries(rawFiles)) {
-    const full = path.join(rawDir, name)
-    fs.mkdirSync(path.dirname(full), { recursive: true })
-    fs.writeFileSync(full, content)
-  }
-  process.env.WIKI_PATH = wikiDir
-  process.env.RAW_PATH = rawDir
-  // senza il reset l'import dinamico restituirebbe il modulo già in cache, legato alla fixture precedente
-  vi.resetModules()
-  const svc = await import('../src/wiki/service.js')
+  writeTree(wikiDir, files)
+  writeTree(rawDir, rawFiles)
+  const svc = makeService(wikiDir, rawDir, opts)
   return { svc, root, wikiDir, rawDir }
 }
 

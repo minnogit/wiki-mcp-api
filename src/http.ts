@@ -1,13 +1,15 @@
 import 'dotenv/config'
 import http from 'node:http'
+import type { MCPServer } from '@mastra/mcp'
+import { ConfigError, loadWikis } from './config.js'
 import { FailureRateLimiter, createRequestHandler, rateLimitFromEnv } from './http-auth.js'
-import { rawOverHttp, remoteServer } from './server.js'
+import { buildRemoteServer, rawOverHttp } from './server.js'
+import { createWikiService } from './wiki/service.js'
 
 const PORT = Number(process.env.MCP_HTTP_PORT ?? 3000)
 // Di default solo loopback: per esporre il server serve sceglierlo (es. 0.0.0.0
 // in un container, o un reverse proxy locale davanti).
 const HOST = process.env.MCP_HTTP_HOST || '127.0.0.1'
-const HTTP_PATH = '/mcp'
 const TOKEN = process.env.MCP_HTTP_TOKEN
 
 if (!TOKEN) {
@@ -17,20 +19,48 @@ if (!TOKEN) {
   process.exit(1)
 }
 
+let wikis
+try {
+  wikis = loadWikis()
+} catch (error) {
+  if (!(error instanceof ConfigError)) throw error
+  console.error(`${error.message}\nInterrompo.`)
+  process.exit(1)
+}
+
+// Un MCPServer per wiki, creati una volta all'avvio (non per richiesta): ognuno ha il proprio
+// service, quindi la propria cache, e tiene le proprie sessioni MCP.
+const exposeRaw = rawOverHttp()
+const servers = new Map<string, MCPServer>(
+  wikis.map((ctx) => [ctx.name, buildRemoteServer(createWikiService(ctx), { exposeRaw })]),
+)
+
 const handleRequest = createRequestHandler({
   token: TOKEN,
-  httpPath: HTTP_PATH,
   limiter: new FailureRateLimiter(rateLimitFromEnv()),
-  mcp: (url, req, res) => remoteServer.startHTTP({ url, httpPath: HTTP_PATH, req, res }),
+  wikis: wikis.map((w) => w.name),
+  mcp: (wiki, url, req, res) =>
+    // httpPath è il percorso effettivo della richiesta (/mcp o /mcp/<name>): il server MCP lo confronta con l'URL
+    servers.get(wiki)!.startHTTP({ url, httpPath: url.pathname, req, res }),
 })
 
 const httpServer = http.createServer((req, res) => void handleRequest(req, res))
 
 httpServer.listen(PORT, HOST, () => {
-  console.log(`MCP wiki server (read-only) in ascolto su http://${HOST}:${PORT}${HTTP_PATH}`)
+  const base = `http://${HOST}:${PORT}`
+  console.log(`MCP wiki server (read-only) in ascolto su ${base}`)
+  for (const w of wikis) {
+    console.log(`  /mcp/${w.name}${w.rawDir ? '' : ' (senza sorgenti raw)'}`)
+  }
+  if (wikis.length === 1) {
+    console.log(`  /mcp (alias di /mcp/${wikis[0].name}, valido solo con una wiki configurata)`)
+  }
   console.log(
-    rawOverHttp
-      ? 'ATTENZIONE: MCP_HTTP_EXPOSE_RAW=true, i tool sulle sorgenti (raw/) sono esposti a chi ha il token.'
+    exposeRaw
+      ? 'ATTENZIONE: MCP_HTTP_EXPOSE_RAW=true, i tool sulle sorgenti (raw/) sono esposti a chi ha il token, per ogni wiki con rawPath.'
       : 'Sorgenti (raw/) non esposte: solo i tool sulle pagine. MCP_HTTP_EXPOSE_RAW=true per abilitarle.',
   )
+  if (wikis.length > 1) {
+    console.log('Un solo MCP_HTTP_TOKEN vale per tutte le wiki: nessuna separazione per token.')
+  }
 })

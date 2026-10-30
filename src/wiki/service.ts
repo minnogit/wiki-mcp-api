@@ -39,14 +39,22 @@ async function withFileLock<T>(targetPath: string, fn: () => Promise<T>): Promis
   }
 }
 
-function resolveDir(envVar: string, fallback: string): string {
-  const val = process.env[envVar]
-  if (!val) return path.resolve(fallback)
-  return path.isAbsolute(val) ? val : path.resolve(val)
+/**
+ * Contesto di una wiki: tutto ciò che il service sa di essa. Niente variabili d'ambiente
+ * né stato di modulo: più wiki nello stesso processo hanno ciascuna il proprio contesto.
+ */
+export interface WikiContext {
+  /** identificativo della wiki (`[a-z0-9-]+`), usato per il routing HTTP e nei messaggi */
+  name: string
+  /** cartella delle pagine (scrivibile da stdio), percorso assoluto */
+  wikiDir: string
+  /** cartella delle sorgenti (sola lettura), percorso assoluto; assente se la wiki non ha sorgenti */
+  rawDir?: string
+  /** riga che descrive il dominio documentato, per le `instructions` del client MCP */
+  domain?: string
+  /** fuso IANA con cui rendere le date derivate dall'mtime; assente = fuso del processo */
+  tz?: string
 }
-
-const WIKI_DIR = resolveDir('WIKI_PATH', './wiki')
-const RAW_DIR = resolveDir('RAW_PATH', './raw')
 
 export interface PageFrontmatter {
   tipo?: string
@@ -150,24 +158,15 @@ async function scanDir(
   return nested.flat()
 }
 
-// Cache di parsing per singolo file: evita di rileggere/riparsare tutto il corpus a
-// ogni chiamata tool. Validità basata su (mtimeMs, size): scritture via writePage/
-// appendLog ed edit esterni cambiano l'mtime e invalidano da sole; le voci dei file
-// eliminati vengono rimosse in getAllPages. Le Page condivise dalla cache sono da
-// trattare come immutabili (nessun consumer le muta mai in place).
-const pageCache = new Map<string, { key: string; page: Page }>()
-
 // Fuso con cui rendere le date derivate dall'mtime (YYYY-MM-DD). Di default si usa
 // quello del processo, ma su deploy remoti il fuso della macchina non c'entra con
-// quello di chi usa la wiki: WIKI_TZ (es. "Europe/Rome") lo fissa esplicitamente.
-const WIKI_TZ = process.env.WIKI_TZ
-
-function instantToDate(ms: number): string {
+// quello di chi usa la wiki: il campo `tz` del contesto (es. "Europe/Rome") lo fissa.
+function instantToDate(ms: number, tz?: string): string {
   const pad = (n: number): string => String(n).padStart(2, '0')
   const d = new Date(ms)
-  if (!WIKI_TZ) return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
+  if (!tz) return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
   const parts = new Intl.DateTimeFormat('en-CA', {
-    timeZone: WIKI_TZ,
+    timeZone: tz,
     year: 'numeric',
     month: '2-digit',
     day: '2-digit',
@@ -176,7 +175,12 @@ function instantToDate(ms: number): string {
   return `${get('year')}-${get('month')}-${get('day')}`
 }
 
-async function parsePage(relPath: string, full: string, stat: fs.Stats): Promise<Page> {
+async function parsePage(
+  relPath: string,
+  full: string,
+  stat: fs.Stats,
+  tz?: string,
+): Promise<Page> {
   const raw = await fsp.readFile(full, 'utf-8')
   const { data, content } = matter(raw) as { data: Record<string, unknown>; content: string }
   const stringOrUndefined = (v: unknown): string | undefined =>
@@ -200,78 +204,8 @@ async function parsePage(relPath: string, full: string, stat: fs.Stats): Promise
     },
     content: content.trim(),
     links: extractLinks(content, relPath),
-    updatedAt: instantToDate(stat.mtimeMs),
+    updatedAt: instantToDate(stat.mtimeMs, tz),
   }
-}
-
-async function parsePageCached(relPath: string, full: string): Promise<Page> {
-  const stat = await fsp.stat(full)
-  const key = `${stat.mtimeMs}:${stat.size}`
-  const hit = pageCache.get(full)
-  if (hit?.key === key) return hit.page
-  const page = await parsePage(relPath, full, stat)
-  pageCache.set(full, { key, page })
-  return page
-}
-
-export async function getAllPages(): Promise<Page[]> {
-  const seen = new Set<string>()
-  const pages = await Promise.all(
-    (await scanDir(WIKI_DIR, WIKI_DIR, (name) => name.endsWith('.md'))).map(async (rel) => {
-      const full = path.join(WIKI_DIR, rel)
-      seen.add(full)
-      return parsePageCached(rel, full)
-    }),
-  )
-  for (const key of pageCache.keys()) if (!seen.has(key)) pageCache.delete(key)
-  return pages
-}
-
-export async function getPage(slug: string): Promise<Page | null> {
-  const relPath = slug.endsWith('.md') ? slug : slug + '.md'
-  const full = path.join(WIKI_DIR, relPath)
-  if (!full.startsWith(WIKI_DIR + path.sep)) return null
-  try {
-    return await parsePageCached(relPath, full)
-  } catch (e) {
-    if (isEnoent(e)) return null
-    throw e
-  }
-}
-
-export async function searchPages(opts: SearchOpts): Promise<PageMeta[]> {
-  const allPages = await getAllPages()
-  // Senza un limite, una query che matcha molte pagine restituisce un output
-  // potenzialmente enorme (metadati + snippet per ogni pagina), che i client MCP
-  // troncano per proteggere il context window — perdendo magari proprio le pagine
-  // più rilevanti finite in coda. Limitiamo quindi ai topK risultati migliori.
-  // Con `q` i risultati sono ordinati per score: i primi 10 sono i più rilevanti.
-  // Senza `q` (solo filtro tag/tipo/stato) non c'è alcun ranking, quindi tagliare
-  // a 10 sarebbe arbitrario — usiamo un default più alto in quel caso.
-  const topK = opts.topK ?? (opts.q ? 10 : 50)
-
-  const filtered = allPages.filter((p) => {
-    if (opts.tipo && p.frontmatter.tipo !== opts.tipo) return false
-    if (opts.stato && p.frontmatter.stato !== opts.stato) return false
-    if (opts.tag && !p.frontmatter.tags?.some((t) => t.toLowerCase() === opts.tag!.toLowerCase()))
-      return false
-    return true
-  })
-
-  if (!opts.q) return filtered.slice(0, topK).map(({ content, links, ...meta }) => meta)
-
-  const toMeta = ({ page, snippet }: RankedPage<Page>, score?: number): PageMeta => {
-    const { content, links, ...meta } = page
-    return { ...meta, ...(score === undefined ? {} : { score }), snippet }
-  }
-
-  const ranked = rankPages(allPages, filtered, opts.q)
-  // query senza token utili (es. solo stopword/simboli): fallback a substring match
-  if (!ranked)
-    return substringMatches(filtered, opts.q)
-      .slice(0, topK)
-      .map((r) => toMeta(r))
-  return ranked.slice(0, topK).map((r) => toMeta(r, r.score))
 }
 
 const RESERVED_ROOT_FILES = new Set(['index.md', 'log.md', 'sources.md', 'overview.md'])
@@ -307,44 +241,9 @@ function validateFrontmatter(relPath: string, content: string): void {
   }
 }
 
-export async function writePage(relPath: string, content: string): Promise<void> {
-  if (!relPath.endsWith('.md')) throw new Error('Solo file .md sono consentiti')
-  const full = path.resolve(WIKI_DIR, relPath)
-  if (!full.startsWith(WIKI_DIR + path.sep)) throw new Error('Path fuori dalla wiki directory')
-  validateFrontmatter(relPath, content)
-  await withFileLock(full, () => fsp.writeFile(full, content, 'utf-8'))
-}
-
-export async function appendLog(entry: string): Promise<void> {
-  const logPath = path.join(WIKI_DIR, 'log.md')
-  await withFileLock(logPath, () => fsp.appendFile(logPath, '\n' + entry + '\n', 'utf-8'))
-}
-
 export interface RawFileInfo {
   filename: string
   checksum: string
-}
-
-// Ricorsivo: i filename restituiti sono path relativi a RAW_DIR (es. "verbali/2026-01.md"),
-// così due file con lo stesso basename in sottocartelle diverse restano distinguibili sia
-// qui sia in wiki/sources.md (che li registra come "raw/<path completo>").
-export async function listRaw(): Promise<RawFileInfo[]> {
-  const relPaths = await scanDir(RAW_DIR, RAW_DIR)
-  return Promise.all(
-    relPaths.map(async (filename) => ({ filename, checksum: await checksumIn(RAW_DIR, filename) })),
-  )
-}
-
-export async function readRaw(filename: string): Promise<string> {
-  const full = path.resolve(RAW_DIR, filename)
-  if (path.isAbsolute(filename) || !full.startsWith(RAW_DIR + path.sep))
-    throw new Error('Filename non valido')
-  try {
-    return await fsp.readFile(full, 'utf-8')
-  } catch (e) {
-    if (isEnoent(e)) throw new Error(`File raw non trovato: ${filename}`)
-    throw e
-  }
 }
 
 export type RawDiffResult =
@@ -361,108 +260,6 @@ const CHECKSUM_RE = /^[0-9a-f]{12}$/i
 // Git accoda il file come ultimo argomento (qui diventa $0); pdftotext deve scrivere su stdout (`-`).
 const GIT_DIFF_DRIVERS = ['-c', 'diff.pdf.textconv=sh -c \'exec pdftotext -layout "$0" -\'']
 
-function runGit(args: string[]): Promise<string> {
-  return execFileAsync(
-    'git',
-    [...GIT_DIFF_DRIVERS, '--literal-pathspecs', '-C', RAW_DIR, ...args],
-    {
-      maxBuffer: 32 * 1024 * 1024,
-      env: { ...process.env, GIT_PAGER: 'cat' },
-    },
-  ).then((r) => r.stdout)
-}
-
-// Trova il commit in cui il file aveva il checksum registrato in sources.md (stessa
-// definizione di fileChecksum: sha256 sul contenuto grezzo, primi 12 hex). Si ancora al
-// contenuto e non a un hash di commit annotato a mano, che può non corrispondere.
-async function findCommitByChecksum(filename: string, checksum: string): Promise<string | null> {
-  const commits = (
-    await runGit(['log', `-n${RAW_DIFF_MAX_COMMITS}`, '--format=%H', '--', filename])
-  )
-    .split('\n')
-    .filter(Boolean)
-  for (const commit of commits) {
-    let blob: Buffer
-    try {
-      blob = (
-        await execFileAsync('git', ['-C', RAW_DIR, 'show', `${commit}:./${filename}`], {
-          encoding: 'buffer',
-          maxBuffer: 64 * 1024 * 1024,
-        })
-      ).stdout
-    } catch {
-      continue
-    }
-    if (
-      crypto.createHash('sha256').update(blob).digest('hex').slice(0, 12) === checksum.toLowerCase()
-    )
-      return commit
-  }
-  return null
-}
-
-export async function rawDiff(filename: string, sinceChecksum?: string): Promise<RawDiffResult> {
-  const full = path.resolve(RAW_DIR, filename)
-  if (path.isAbsolute(filename) || !full.startsWith(RAW_DIR + path.sep))
-    throw new Error('Filename non valido')
-  if (sinceChecksum !== undefined && !CHECKSUM_RE.test(sinceChecksum))
-    throw new Error('sinceChecksum deve essere di 12 caratteri esadecimali')
-  try {
-    await fsp.access(full)
-  } catch (e) {
-    if (isEnoent(e)) throw new Error(`File raw non trovato: ${filename}`)
-    throw e
-  }
-
-  try {
-    await runGit(['rev-parse', '--is-inside-work-tree'])
-  } catch {
-    return { status: 'no-git' }
-  }
-  try {
-    await runGit(['ls-files', '--error-unmatch', '--', filename])
-  } catch {
-    return { status: 'untracked' }
-  }
-
-  const diffOpts = ['--no-color', '--no-ext-diff']
-  let base: string
-  let out: string
-  try {
-    if (sinceChecksum) {
-      const commit = await findCommitByChecksum(filename, sinceChecksum)
-      if (!commit) return { status: 'baseline-not-found' }
-      base = commit
-      out = await runGit(['diff', ...diffOpts, commit, '--', filename])
-    } else {
-      base = 'HEAD'
-      out = await runGit(['diff', ...diffOpts, 'HEAD', '--', filename])
-      if (!out.trim()) {
-        const last = (await runGit(['log', '-n1', '--format=%H', '--', filename])).trim()
-        if (last) {
-          base = `${last}^`
-          out = await runGit(['show', ...diffOpts, '--format=', last, '--', filename])
-        }
-      }
-    }
-  } catch (e) {
-    throw new Error(
-      `git diff fallito: ${((e as { stderr?: string }).stderr ?? (e as Error).message).trim()}`,
-    )
-  }
-
-  if (!out.trim()) return { status: 'unchanged' }
-  if (out.split('\n').some((line) => line.startsWith('Binary files ') && line.endsWith(' differ')))
-    return { status: 'binary' }
-  const truncated = out.length > RAW_DIFF_MAX_CHARS
-  return {
-    status: 'diff',
-    base,
-    diff: truncated ? out.slice(0, RAW_DIFF_MAX_CHARS) : out,
-    truncated,
-  }
-}
-
 async function checksumIn(dir: string, relPath: string): Promise<string> {
   const full = path.resolve(dir, relPath)
   if (!full.startsWith(dir + path.sep)) throw new Error('Path fuori dalla directory consentita')
@@ -476,18 +273,6 @@ async function checksumIn(dir: string, relPath: string): Promise<string> {
   if (!st.isFile()) throw new Error(`File non trovato: ${relPath}`)
   const buf = await fsp.readFile(full)
   return crypto.createHash('sha256').update(buf).digest('hex').slice(0, 12)
-}
-
-// Accetta solo path relativi a wiki/ o raw/: in caso di omonimia vince la copia in
-// wiki/ (fonte già ingerita). Niente path assoluti, per coerenza col boundary
-// wiki/ scrivibile / raw/ leggibile.
-export async function fileChecksum(relPath: string): Promise<string> {
-  if (path.isAbsolute(relPath)) throw new Error('Solo path relativi a wiki/ o raw/ sono consentiti')
-  const w = path.resolve(WIKI_DIR, relPath)
-  const r = path.resolve(RAW_DIR, relPath)
-  if (w.startsWith(WIKI_DIR + path.sep) && (await exists(w))) return checksumIn(WIKI_DIR, relPath)
-  if (r.startsWith(RAW_DIR + path.sep) && (await exists(r))) return checksumIn(RAW_DIR, relPath)
-  throw new Error(`File non trovato: ${relPath}`)
 }
 
 export interface Graph {
@@ -516,55 +301,325 @@ function resolveLink(
   return candidates.includes(sameDir) ? sameDir : link
 }
 
-export async function getGraph(): Promise<Graph> {
-  const pages = await getAllPages()
-  const forward: Record<string, string[]> = {}
-  const reverse: Record<string, string[]> = {}
-
-  const slugs = new Set(pages.map((p) => p.slug))
-  const byName = new Map<string, string[]>()
-  for (const s of slugs) {
-    const name = path.posix.basename(s)
-    byName.set(name, [...(byName.get(name) ?? []), s])
-  }
-
-  for (const p of pages) {
-    forward[p.slug] = [...new Set(p.links.map((l) => resolveLink(l, p.slug, slugs, byName)))]
-    reverse[p.slug] = reverse[p.slug] ?? []
-  }
-  for (const p of pages) {
-    for (const linked of forward[p.slug]) {
-      reverse[linked] = [...(reverse[linked] ?? []), p.slug]
-    }
-  }
-
-  const orphans = pages
-    .filter((p) => !EXCLUDED_FROM_ORPHANS.has(p.slug) && (reverse[p.slug]?.length ?? 0) === 0)
-    .map((p) => p.slug)
-
-  return { forward, reverse, orphans }
-}
-
 // La data semantica è il frontmatter `aggiornato` (YYYY-MM-DD, già normalizzato da
 // YAML); se assente o malformato si ripiega sulla data del file.
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/
 
-export async function getStatus(): Promise<WikiStatus> {
-  const pages = await getAllPages()
-  const byTipo: Record<string, number> = {}
-  const byStato: Record<string, number> = {}
-  let lastUpdated = ''
-  for (const p of pages) {
-    const t = p.frontmatter.tipo ?? 'senza-tipo'
-    byTipo[t] = (byTipo[t] ?? 0) + 1
-    const s = p.frontmatter.stato ?? 'senza-stato'
-    byStato[s] = (byStato[s] ?? 0) + 1
-    const a = p.frontmatter.aggiornato
-    const updated = a && DATE_RE.test(a) ? a : p.updatedAt
-    if (updated > lastUpdated) lastUpdated = updated
+/**
+ * Crea il service di una wiki, legato al suo contesto. Cache di parsing e percorsi sono
+ * locali alla chiamata: due service nello stesso processo non condividono nulla.
+ */
+export function createWikiService(ctx: WikiContext) {
+  const wikiDir = path.resolve(ctx.wikiDir)
+  const rawDir = ctx.rawDir ? path.resolve(ctx.rawDir) : undefined
+
+  function requireRaw(): string {
+    if (!rawDir) throw new Error(`Sorgenti raw non configurate per la wiki "${ctx.name}"`)
+    return rawDir
   }
-  const status: WikiStatus = { totalPages: pages.length, byTipo, byStato, lastUpdated }
-  const source = await getWikiSource(WIKI_DIR)
-  if (source) status.source = source
-  return status
+
+  // Cache di parsing per singolo file: evita di rileggere/riparsare tutto il corpus a
+  // ogni chiamata tool. Validità basata su (mtimeMs, size): scritture via writePage/
+  // appendLog ed edit esterni cambiano l'mtime e invalidano da sole; le voci dei file
+  // eliminati vengono rimosse in getAllPages. Le Page condivise dalla cache sono da
+  // trattare come immutabili (nessun consumer le muta mai in place).
+  const pageCache = new Map<string, { key: string; page: Page }>()
+
+  async function parsePageCached(relPath: string, full: string): Promise<Page> {
+    const stat = await fsp.stat(full)
+    const key = `${stat.mtimeMs}:${stat.size}`
+    const hit = pageCache.get(full)
+    if (hit?.key === key) return hit.page
+    const page = await parsePage(relPath, full, stat, ctx.tz)
+    pageCache.set(full, { key, page })
+    return page
+  }
+
+  async function getAllPages(): Promise<Page[]> {
+    const seen = new Set<string>()
+    const pages = await Promise.all(
+      (await scanDir(wikiDir, wikiDir, (name) => name.endsWith('.md'))).map(async (rel) => {
+        const full = path.join(wikiDir, rel)
+        seen.add(full)
+        return parsePageCached(rel, full)
+      }),
+    )
+    for (const key of pageCache.keys()) if (!seen.has(key)) pageCache.delete(key)
+    return pages
+  }
+
+  async function getPage(slug: string): Promise<Page | null> {
+    const relPath = slug.endsWith('.md') ? slug : slug + '.md'
+    const full = path.join(wikiDir, relPath)
+    if (!full.startsWith(wikiDir + path.sep)) return null
+    try {
+      return await parsePageCached(relPath, full)
+    } catch (e) {
+      if (isEnoent(e)) return null
+      throw e
+    }
+  }
+
+  async function searchPages(opts: SearchOpts): Promise<PageMeta[]> {
+    const allPages = await getAllPages()
+    // Senza un limite, una query che matcha molte pagine restituisce un output
+    // potenzialmente enorme (metadati + snippet per ogni pagina), che i client MCP
+    // troncano per proteggere il context window — perdendo magari proprio le pagine
+    // più rilevanti finite in coda. Limitiamo quindi ai topK risultati migliori.
+    // Con `q` i risultati sono ordinati per score: i primi 10 sono i più rilevanti.
+    // Senza `q` (solo filtro tag/tipo/stato) non c'è alcun ranking, quindi tagliare
+    // a 10 sarebbe arbitrario — usiamo un default più alto in quel caso.
+    const topK = opts.topK ?? (opts.q ? 10 : 50)
+
+    const filtered = allPages.filter((p) => {
+      if (opts.tipo && p.frontmatter.tipo !== opts.tipo) return false
+      if (opts.stato && p.frontmatter.stato !== opts.stato) return false
+      if (opts.tag && !p.frontmatter.tags?.some((t) => t.toLowerCase() === opts.tag!.toLowerCase()))
+        return false
+      return true
+    })
+
+    if (!opts.q) return filtered.slice(0, topK).map(({ content, links, ...meta }) => meta)
+
+    const toMeta = ({ page, snippet }: RankedPage<Page>, score?: number): PageMeta => {
+      const { content, links, ...meta } = page
+      return { ...meta, ...(score === undefined ? {} : { score }), snippet }
+    }
+
+    const ranked = rankPages(allPages, filtered, opts.q)
+    // query senza token utili (es. solo stopword/simboli): fallback a substring match
+    if (!ranked)
+      return substringMatches(filtered, opts.q)
+        .slice(0, topK)
+        .map((r) => toMeta(r))
+    return ranked.slice(0, topK).map((r) => toMeta(r, r.score))
+  }
+
+  async function writePage(relPath: string, content: string): Promise<void> {
+    if (!relPath.endsWith('.md')) throw new Error('Solo file .md sono consentiti')
+    const full = path.resolve(wikiDir, relPath)
+    if (!full.startsWith(wikiDir + path.sep)) throw new Error('Path fuori dalla wiki directory')
+    validateFrontmatter(relPath, content)
+    await withFileLock(full, () => fsp.writeFile(full, content, 'utf-8'))
+  }
+
+  async function appendLog(entry: string): Promise<void> {
+    const logPath = path.join(wikiDir, 'log.md')
+    await withFileLock(logPath, () => fsp.appendFile(logPath, '\n' + entry + '\n', 'utf-8'))
+  }
+
+  // Ricorsivo: i filename restituiti sono path relativi a rawDir (es. "verbali/2026-01.md"),
+  // così due file con lo stesso basename in sottocartelle diverse restano distinguibili sia
+  // qui sia in wiki/sources.md (che li registra come "raw/<path completo>").
+  async function listRaw(): Promise<RawFileInfo[]> {
+    const rawDir = requireRaw()
+    const relPaths = await scanDir(rawDir, rawDir)
+    return Promise.all(
+      relPaths.map(async (filename) => ({
+        filename,
+        checksum: await checksumIn(rawDir, filename),
+      })),
+    )
+  }
+
+  async function readRaw(filename: string): Promise<string> {
+    const rawDir = requireRaw()
+    const full = path.resolve(rawDir, filename)
+    if (path.isAbsolute(filename) || !full.startsWith(rawDir + path.sep))
+      throw new Error('Filename non valido')
+    try {
+      return await fsp.readFile(full, 'utf-8')
+    } catch (e) {
+      if (isEnoent(e)) throw new Error(`File raw non trovato: ${filename}`)
+      throw e
+    }
+  }
+
+  function runGit(args: string[]): Promise<string> {
+    const rawDir = requireRaw()
+    return execFileAsync(
+      'git',
+      [...GIT_DIFF_DRIVERS, '--literal-pathspecs', '-C', rawDir, ...args],
+      {
+        maxBuffer: 32 * 1024 * 1024,
+        env: { ...process.env, GIT_PAGER: 'cat' },
+      },
+    ).then((r) => r.stdout)
+  }
+
+  // Trova il commit in cui il file aveva il checksum registrato in sources.md (stessa
+  // definizione di fileChecksum: sha256 sul contenuto grezzo, primi 12 hex). Si ancora al
+  // contenuto e non a un hash di commit annotato a mano, che può non corrispondere.
+  async function findCommitByChecksum(filename: string, checksum: string): Promise<string | null> {
+    const rawDir = requireRaw()
+    const commits = (
+      await runGit(['log', `-n${RAW_DIFF_MAX_COMMITS}`, '--format=%H', '--', filename])
+    )
+      .split('\n')
+      .filter(Boolean)
+    for (const commit of commits) {
+      let blob: Buffer
+      try {
+        blob = (
+          await execFileAsync('git', ['-C', rawDir, 'show', `${commit}:./${filename}`], {
+            encoding: 'buffer',
+            maxBuffer: 64 * 1024 * 1024,
+          })
+        ).stdout
+      } catch {
+        continue
+      }
+      if (
+        crypto.createHash('sha256').update(blob).digest('hex').slice(0, 12) ===
+        checksum.toLowerCase()
+      )
+        return commit
+    }
+    return null
+  }
+
+  async function rawDiff(filename: string, sinceChecksum?: string): Promise<RawDiffResult> {
+    const rawDir = requireRaw()
+    const full = path.resolve(rawDir, filename)
+    if (path.isAbsolute(filename) || !full.startsWith(rawDir + path.sep))
+      throw new Error('Filename non valido')
+    if (sinceChecksum !== undefined && !CHECKSUM_RE.test(sinceChecksum))
+      throw new Error('sinceChecksum deve essere di 12 caratteri esadecimali')
+    try {
+      await fsp.access(full)
+    } catch (e) {
+      if (isEnoent(e)) throw new Error(`File raw non trovato: ${filename}`)
+      throw e
+    }
+
+    try {
+      await runGit(['rev-parse', '--is-inside-work-tree'])
+    } catch {
+      return { status: 'no-git' }
+    }
+    try {
+      await runGit(['ls-files', '--error-unmatch', '--', filename])
+    } catch {
+      return { status: 'untracked' }
+    }
+
+    const diffOpts = ['--no-color', '--no-ext-diff']
+    let base: string
+    let out: string
+    try {
+      if (sinceChecksum) {
+        const commit = await findCommitByChecksum(filename, sinceChecksum)
+        if (!commit) return { status: 'baseline-not-found' }
+        base = commit
+        out = await runGit(['diff', ...diffOpts, commit, '--', filename])
+      } else {
+        base = 'HEAD'
+        out = await runGit(['diff', ...diffOpts, 'HEAD', '--', filename])
+        if (!out.trim()) {
+          const last = (await runGit(['log', '-n1', '--format=%H', '--', filename])).trim()
+          if (last) {
+            base = `${last}^`
+            out = await runGit(['show', ...diffOpts, '--format=', last, '--', filename])
+          }
+        }
+      }
+    } catch (e) {
+      throw new Error(
+        `git diff fallito: ${((e as { stderr?: string }).stderr ?? (e as Error).message).trim()}`,
+      )
+    }
+
+    if (!out.trim()) return { status: 'unchanged' }
+    if (
+      out.split('\n').some((line) => line.startsWith('Binary files ') && line.endsWith(' differ'))
+    )
+      return { status: 'binary' }
+    const truncated = out.length > RAW_DIFF_MAX_CHARS
+    return {
+      status: 'diff',
+      base,
+      diff: truncated ? out.slice(0, RAW_DIFF_MAX_CHARS) : out,
+      truncated,
+    }
+  }
+
+  // Accetta solo path relativi a wiki/ o raw/: in caso di omonimia vince la copia in
+  // wiki/ (fonte già ingerita). Niente path assoluti, per coerenza col boundary
+  // wiki/ scrivibile / raw/ leggibile.
+  async function fileChecksum(relPath: string): Promise<string> {
+    if (path.isAbsolute(relPath))
+      throw new Error('Solo path relativi a wiki/ o raw/ sono consentiti')
+    const w = path.resolve(wikiDir, relPath)
+    const r = rawDir ? path.resolve(rawDir, relPath) : undefined
+    if (w.startsWith(wikiDir + path.sep) && (await exists(w))) return checksumIn(wikiDir, relPath)
+    if (rawDir && r?.startsWith(rawDir + path.sep) && (await exists(r)))
+      return checksumIn(rawDir, relPath)
+    throw new Error(`File non trovato: ${relPath}`)
+  }
+
+  async function getGraph(): Promise<Graph> {
+    const pages = await getAllPages()
+    const forward: Record<string, string[]> = {}
+    const reverse: Record<string, string[]> = {}
+
+    const slugs = new Set(pages.map((p) => p.slug))
+    const byName = new Map<string, string[]>()
+    for (const s of slugs) {
+      const name = path.posix.basename(s)
+      byName.set(name, [...(byName.get(name) ?? []), s])
+    }
+
+    for (const p of pages) {
+      forward[p.slug] = [...new Set(p.links.map((l) => resolveLink(l, p.slug, slugs, byName)))]
+      reverse[p.slug] = reverse[p.slug] ?? []
+    }
+    for (const p of pages) {
+      for (const linked of forward[p.slug]) {
+        reverse[linked] = [...(reverse[linked] ?? []), p.slug]
+      }
+    }
+
+    const orphans = pages
+      .filter((p) => !EXCLUDED_FROM_ORPHANS.has(p.slug) && (reverse[p.slug]?.length ?? 0) === 0)
+      .map((p) => p.slug)
+
+    return { forward, reverse, orphans }
+  }
+
+  async function getStatus(): Promise<WikiStatus> {
+    const pages = await getAllPages()
+    const byTipo: Record<string, number> = {}
+    const byStato: Record<string, number> = {}
+    let lastUpdated = ''
+    for (const p of pages) {
+      const t = p.frontmatter.tipo ?? 'senza-tipo'
+      byTipo[t] = (byTipo[t] ?? 0) + 1
+      const s = p.frontmatter.stato ?? 'senza-stato'
+      byStato[s] = (byStato[s] ?? 0) + 1
+      const a = p.frontmatter.aggiornato
+      const updated = a && DATE_RE.test(a) ? a : p.updatedAt
+      if (updated > lastUpdated) lastUpdated = updated
+    }
+    const status: WikiStatus = { totalPages: pages.length, byTipo, byStato, lastUpdated }
+    const source = await getWikiSource(wikiDir)
+    if (source) status.source = source
+    return status
+  }
+
+  return {
+    context: ctx,
+    getAllPages,
+    getPage,
+    searchPages,
+    writePage,
+    appendLog,
+    listRaw,
+    readRaw,
+    rawDiff,
+    fileChecksum,
+    getGraph,
+    getStatus,
+  }
 }
+
+export type WikiService = ReturnType<typeof createWikiService>

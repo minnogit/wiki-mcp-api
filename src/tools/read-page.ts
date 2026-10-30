@@ -1,21 +1,22 @@
 import { createTool } from '@mastra/core/tools'
 import { z } from 'zod'
-import { getPage } from '../wiki/service.js'
+import type { WikiService } from '../wiki/service.js'
 
-export const wikiReadPageTool = createTool({
-  id: 'wikiReadPage',
-  description:
-    'Legge una pagina wiki completa con frontmatter YAML e contenuto Markdown. Usa lo slug relativo, es. "concetti/posizione-debitoria". **Uso via ToolSearch:** Dopo aver caricato con `ToolSearch`, invoca direttamente come `mcp__wiki-mcp-api__wikiReadPage` — il tool diventa immediatamente disponibile per l\'invocazione.',
-  inputSchema: z.object({
-    slug: z
-      .string()
-      .describe(
-        'Slug della pagina, es. "concetti/posizione-debitoria" o "analisi/business-rules-engine"',
-      ),
-  }),
-  execute: async ({ slug }) => {
-    const page = await getPage(slug)
-    if (!page) return { error: `Pagina non trovata: ${slug}` }
-    return page
-  },
-})
+export const wikiReadPageTool = (svc: WikiService) =>
+  createTool({
+    id: 'wikiReadPage',
+    description:
+      'Legge una pagina wiki completa con frontmatter YAML e contenuto Markdown. Usa lo slug relativo, es. "concetti/posizione-debitoria". **Uso via ToolSearch:** Dopo aver caricato con `ToolSearch`, invoca direttamente come `mcp__wiki-mcp-api__wikiReadPage` — il tool diventa immediatamente disponibile per l\'invocazione.',
+    inputSchema: z.object({
+      slug: z
+        .string()
+        .describe(
+          'Slug della pagina, es. "concetti/posizione-debitoria" o "analisi/business-rules-engine"',
+        ),
+    }),
+    execute: async ({ slug }) => {
+      const page = await svc.getPage(slug)
+      if (!page) return { error: `Pagina non trovata: ${slug}` }
+      return page
+    },
+  })

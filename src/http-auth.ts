@@ -2,6 +2,7 @@ import { createHash, timingSafeEqual } from 'node:crypto'
 import type http from 'node:http'
 
 export const HEALTH_PATH = '/healthz'
+export const MCP_PATH = '/mcp'
 
 function sha256(value: string): Buffer {
   return createHash('sha256').update(value).digest()
@@ -91,14 +92,36 @@ export function rateLimitFromEnv(env: NodeJS.ProcessEnv = process.env): RateLimi
 
 export interface RequestHandlerOptions {
   token: string
-  httpPath: string
   limiter: FailureRateLimiter
-  /** Gestore delle richieste MCP autenticate. */
-  mcp: (url: URL, req: http.IncomingMessage, res: http.ServerResponse) => Promise<void>
+  /** Nomi delle wiki servite (già validati all'avvio). */
+  wikis: readonly string[]
+  /** Gestore delle richieste MCP autenticate, già risolte su una wiki esistente. */
+  mcp: (
+    wiki: string,
+    url: URL,
+    req: http.IncomingMessage,
+    res: http.ServerResponse,
+  ) => Promise<void>
+}
+
+// `/mcp/<name>`: un solo segmento, senza decodifica né slash. Altri percorsi sotto /mcp/ non
+// sono endpoint di nessuna wiki e restano 404 anche prima dell'autenticazione, come un path qualunque.
+const WIKI_PATH_RE = /^\/mcp\/([^/]+)$/
+
+type Route = { kind: 'wiki'; name: string } | { kind: 'alias' } | null
+
+function routeOf(pathname: string): Route {
+  if (pathname === MCP_PATH) return { kind: 'alias' }
+  const m = WIKI_PATH_RE.exec(pathname)
+  return m ? { kind: 'wiki', name: m[1] } : null
+}
+
+function notFound(res: http.ServerResponse): void {
+  res.writeHead(404).end('Not found')
 }
 
 export function createRequestHandler(options: RequestHandlerOptions) {
-  const { token, httpPath, limiter, mcp } = options
+  const { token, limiter, wikis, mcp } = options
 
   return async (req: http.IncomingMessage, res: http.ServerResponse): Promise<void> => {
     const url = new URL(req.url ?? '', `http://${req.headers.host ?? 'localhost'}`)
@@ -111,8 +134,9 @@ export function createRequestHandler(options: RequestHandlerOptions) {
       return
     }
 
-    if (url.pathname !== httpPath) {
-      res.writeHead(404).end('Not found')
+    const route = routeOf(url.pathname)
+    if (!route) {
+      notFound(res)
       return
     }
 
@@ -134,8 +158,23 @@ export function createRequestHandler(options: RequestHandlerOptions) {
       return
     }
 
+    // Solo da qui, a token valido, si decide a quale wiki va la richiesta: chi non ha il token
+    // non deve poter distinguere un nome esistente da uno inesistente (stessa 401 per tutti), né
+    // scoprire se il server è configurato con una o più wiki. `/mcp` senza nome è un alias
+    // valido solo con una wiki sola; con più wiki l'endpoint va scelto, e il messaggio non li elenca.
+    let wiki: string | undefined
+    if (route.kind === 'alias') {
+      if (wikis.length === 1) wiki = wikis[0]
+    } else if (wikis.includes(route.name)) {
+      wiki = route.name
+    }
+    if (wiki === undefined) {
+      notFound(res)
+      return
+    }
+
     try {
-      await mcp(url, req, res)
+      await mcp(wiki, url, req, res)
     } catch (error) {
       console.error('Errore gestione richiesta MCP HTTP:', error)
       if (!res.headersSent) {

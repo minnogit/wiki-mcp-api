@@ -180,9 +180,27 @@ docker compose ps                    # lo stato di salute arriva da /healthz
 
 L'immagine contiene solo il codice compilato e le dipendenze di produzione, gira come utente non root e non contiene la wiki. Il reverse proxy TLS si configura come sopra.
 
+## Più wiki sullo stesso server
+
+Una sola istanza serve più wiki (`WIKI_CONFIG`, vedi README principale). Dal lato deploy cambia poco: ogni wiki è un checkout a sé, e `sync-wiki.sh` ne gestisce uno per volta, quindi si lancia una volta per wiki con variabili diverse. Gli script non cambiano.
+
+1. Un `sync-<nome>.env` per wiki, con `WIKI_CHECKOUT` e `WIKI_REPO_URL` (e se serve `WIKI_SSH_KEY`, `WIKI_BRANCH`, `WIKI_INCLUDE_RAW`) diversi, ad esempio `WIKI_CHECKOUT=/var/lib/wiki-mcp/hr`. Il lock di default è `<checkout>.lock`, quindi sincronizzazioni di wiki diverse non si bloccano a vicenda.
+2. Con systemd, una coppia di unit per wiki: copia `wiki-sync.service` e `wiki-sync.timer` in `wiki-sync-<nome>.service` / `.timer`, cambia `EnvironmentFile=` con `sync-<nome>.env` e `Unit=`/`Description=` di conseguenza, poi `systemctl enable --now wiki-sync-<nome>.timer`. Le unit condividono `StateDirectory=wiki-mcp`, quindi i checkout stanno tutti sotto `/var/lib/wiki-mcp` e restano leggibili dal server (`ReadOnlyPaths`). Il webhook (passo 7) lancia un solo `sync-wiki.sh`: con più wiki resta valido per quella del suo `sync.env`, per le altre basta il timer (o un secondo receiver con la sua porta e il suo `.env`).
+3. Con Docker, un servizio `sync` per wiki nel compose, ciascuno con `WIKI_CHECKOUT` e `WIKI_REPO_URL` propri e un proprio volume (o la stessa radice con sottocartelle), tutti montati in sola lettura nel servizio `mcp`.
+4. Un `wikis.json` accanto a `http.env` (es. `/etc/wiki-mcp/wikis.json`) con i percorsi dei checkout, e `WIKI_CONFIG=/etc/wiki-mcp/wikis.json` in `http.env` al posto di `WIKI_PATH`/`RAW_PATH`/`WIKI_DOMAIN`/`WIKI_TZ`:
+
+```json
+[
+  { "name": "hr", "wikiPath": "/var/lib/wiki-mcp/hr/wiki", "domain": "...", "tz": "Europe/Rome" },
+  { "name": "it", "wikiPath": "/var/lib/wiki-mcp/it/wiki" }
+]
+```
+
+Il reverse proxy non cambia (stessa porta). I client usano `https://wiki.example.com/mcp/<name>`. Il token è uno solo per tutte le wiki: non mettere sullo stesso server wiki con riservatezza diversa finché non esistono token per utente o gruppo. Il Dockerfile resta com'è: `WIKI_PATH`/`RAW_PATH` impostate nell'immagine vengono semplicemente ignorate quando `WIKI_CONFIG` è presente.
+
 ## Collegare un client MCP remoto
 
-Il server parla MCP su HTTP e richiede `Authorization: Bearer <MCP_HTTP_TOKEN>` su ogni richiesta, all'URL `https://wiki.example.com/mcp`.
+Il server parla MCP su HTTP e richiede `Authorization: Bearer <MCP_HTTP_TOKEN>` su ogni richiesta, all'URL `https://wiki.example.com/mcp/<name>`. Con una sola wiki configurata (anche senza `WIKI_CONFIG`, dove si chiama `default`) vale anche l'alias `https://wiki.example.com/mcp`; con più wiki l'alias risponde 404. Gli esempi di configurazione del client qui sotto usano l'alias.
 
 Claude Code:
 
@@ -215,8 +233,8 @@ curl -fsS http://127.0.0.1:3000/healthz            # {"status":"ok"}
 curl -fsS https://wiki.example.com/healthz         # attraverso il proxy
 
 # autenticazione: 401 senza token, non-401 con token
-curl -s -o /dev/null -w '%{http_code}\n' https://wiki.example.com/mcp
-curl -s -o /dev/null -w '%{http_code}\n' -H "Authorization: Bearer $MCP_HTTP_TOKEN" https://wiki.example.com/mcp
+curl -s -o /dev/null -w '%{http_code}\n' https://wiki.example.com/mcp/<name>
+curl -s -o /dev/null -w '%{http_code}\n' -H "Authorization: Bearer $MCP_HTTP_TOKEN" https://wiki.example.com/mcp/<name>
 
 # sincronizzazione
 systemctl list-timers wiki-sync.timer
@@ -240,6 +258,8 @@ Per confrontare il checkout con il remoto: `git -C /var/lib/wiki-mcp/checkout re
 | `lock ... non ottenuto` | un'altra sincronizzazione è bloccata (rete lenta?). Cerca `git` in esecuzione con `ps`; il lock si libera da solo quando il processo termina. |
 | `wiki-mcp-http` esce subito con `MCP_HTTP_TOKEN non impostato` | `http.env` mancante o non leggibile da `wikimcp`. |
 | Il server parte ma le pagine non ci sono | `WIKI_PATH` non punta a `<checkout>/wiki`, oppure la prima sincronizzazione non è mai riuscita. |
+| `404` con il token giusto | con più wiki `/mcp` senza nome non esiste, e un nome non presente in `wikis.json` è sconosciuto: usa `/mcp/<name>`. |
+| `wiki-mcp-http` esce subito con `WIKI_CONFIG non valido` | l'errore elenca la voce sbagliata (nome non valido o duplicato, campo sconosciuto, fuso inesistente). |
 | `401` anche con il token | token diverso da quello in `http.env`, o il proxy non inoltra l'header `Authorization`. |
 | Una modifica fatta a mano nel checkout sparisce | è voluto: ogni sincronizzazione fa `reset --hard`. Le modifiche si fanno in locale e si pushano. |
 | Il push c'è ma il server non si aggiorna | guarda `journalctl -u wiki-sync.service`; per il webhook, in GitHub → Webhooks → Recent Deliveries (401 = segreto diverso, 202 `ignored` = branch diverso) e `journalctl -u wiki-webhook.service`. |
