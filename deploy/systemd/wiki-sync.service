@@ -1,0 +1,33 @@
+[Unit]
+Description=Sincronizza il checkout della wiki con origin/main
+Documentation=https://github.com/minnogit/wiki-mcp-api/blob/main/deploy/README.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=wikisync
+Group=wikisync
+# Crea /var/lib/wiki-mcp (checkout e lock); leggibile da tutti, così wikimcp può leggerlo.
+StateDirectory=wiki-mcp
+StateDirectoryMode=0755
+UMask=0022
+Environment=HOME=/var/lib/wiki-mcp
+# WIKI_REPO_URL, WIKI_SSH_KEY, WIKI_BRANCH, WIKI_INCLUDE_RAW, ... (vedi deploy/README.md)
+EnvironmentFile=/etc/wiki-mcp/sync.env
+ExecStart=/opt/wiki-mcp-api/deploy/sync-wiki.sh
+TimeoutStartSec=5min
+
+# Hardening: scrive solo nella propria StateDirectory.
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+LockPersonality=true
+CapabilityBoundingSet=

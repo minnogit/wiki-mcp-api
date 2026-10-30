@@ -1,0 +1,37 @@
+[Unit]
+Description=Server MCP wiki (HTTP, sola lettura)
+Documentation=https://github.com/minnogit/wiki-mcp-api/blob/main/deploy/README.md
+After=network-online.target wiki-sync.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=wikimcp
+Group=wikimcp
+WorkingDirectory=/opt/wiki-mcp-api
+# Contiene MCP_HTTP_TOKEN, WIKI_PATH, RAW_PATH, ... (vedi deploy/README.md)
+EnvironmentFile=/etc/wiki-mcp/http.env
+ExecStart=/usr/bin/node /opt/wiki-mcp-api/dist/http.js
+Restart=on-failure
+RestartSec=5s
+
+# Hardening: il processo legge la wiki e basta, non scrive da nessuna parte.
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+LockPersonality=true
+SystemCallArchitectures=native
+CapabilityBoundingSet=
+# Il checkout è scritto da wiki-sync.service (altro utente): qui solo lettura.
+ReadOnlyPaths=/var/lib/wiki-mcp
+
+[Install]
+WantedBy=multi-user.target
