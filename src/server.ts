@@ -98,6 +98,7 @@ function buildInstructions(domain: string | undefined, { sources }: { sources: b
     '- wikiWritePage valida il frontmatter (tipo/tags/fonti/aggiornato/stato); index.md, log.md, sources.md e overview.md ne sono esenti',
     ...(sources ? ['- wikiReadRaw e wikiRawDiff sono read-only'] : []),
     '- I path delle pagine sono relativi alla wiki dir (es. "concetti/verbale.md")',
+    '- alcune pagine possono essere riservate ad altri gruppi (frontmatter visibilita/gruppi): se non sono permesse al tuo accesso non compaiono in nessun tool e wikiReadPage risponde come per una pagina inesistente',
   ].join('\n')
 }
 

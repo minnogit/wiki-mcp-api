@@ -95,6 +95,34 @@ componente regolamentare/normativa; adattali al tuo — rimuovi `normativa` se
 non si applica, aggiungi altri valori se il dominio ha categorie proprie che
 gli enum sopra non colgono (basta restare coerenti nel tempo).
 
+**Permessi di lettura (opzionali)**: se il server serve la wiki da remoto con
+token per utente, due campi in più nel frontmatter decidono chi vede la pagina:
+
+```yaml
+visibilita: pubblica | interna | riservata
+gruppi: [hr, legal] # solo con visibilita: riservata
+```
+
+- campo assente, `pubblica` o `interna`: la pagina è visibile a chiunque abbia
+  accesso alla wiki (`interna` oggi vale come `pubblica`: è un'etichetta per
+  distinzioni future, non dà regole in più);
+- `riservata`: la vede solo chi ha almeno uno dei `gruppi` indicati; senza `gruppi`
+  (o vuoto) la vede solo il gruppo speciale `admin`, che vede sempre tutto;
+- `gruppi` su una pagina non riservata non ha effetto (la scrittura te lo segnala);
+- un valore sconosciuto in `visibilita` (es. `riservta`) vale `riservata`: nel dubbio
+  la pagina si chiude, mai si apre. Rifiutato in scrittura dal server;
+- una pagina non permessa è **invisibile** a chi non la può vedere: non compare in
+  ricerche, elenchi, grafo e conteggi, e `wikiReadPage` risponde come per una pagina
+  inesistente. Non cercare di «scoprirla»: per te non esiste;
+- un agente locale su stdio (senza token) vede tutto.
+
+Attenzione ai **link e agli elenchi**: il filtro nasconde le pagine, non il loro testo
+altrove. Se una pagina pubblica contiene `[[stipendi]]` o la cita per titolo, chi la
+legge vede quel testo (nel grafo il link appare come puntato a una pagina inesistente).
+Non citare pagine riservate dal corpo di pagine pubbliche, e soprattutto non farlo in
+`index.md` e `overview.md` (§7, §10), che elencano le pagine: o li tieni liberi da
+riferimenti a pagine riservate, o marchi anche quei file con `visibilita: riservata`.
+
 **Tag**: prima di inventare un tag nuovo, controlla se esiste già uno
 equivalente (`wikiSearch` senza `q`, o scorri `tags:` di pagine simili) e
 riusalo — anche se il nome che avresti scelto tu è leggermente diverso
@@ -389,6 +417,11 @@ breve descrizione e conteggio fonti:
 
 Aggiorna a ogni ingest.
 
+Se la wiki ha pagine `riservata`, **non elencarle qui**: `index.md` è visibile a tutti
+e ogni riga che le nomina rivela che esistono (titolo e descrizione compresi). Elencale
+in un indice separato marcato `visibilita: riservata` (con i gruppi giusti), oppure
+marca `index.md` stesso se è ad accesso ristretto.
+
 ---
 
 ## 8. `log.md`
@@ -449,7 +482,8 @@ grep "raw/" wiki/sources.md
 Sintesi corrente del dominio in 1-2 pagine. Aggiornata quando ingest o
 analisi cambiano significativamente la comprensione. Non descrivere ogni
 dettaglio: copri i concetti chiave, i workflow principali, i punti aperti,
-e linka le pagine pertinenti.
+e linka le pagine pertinenti. Come per `index.md` (§7): non citare pagine
+riservate in un file che leggono tutti.
 
 ---
 

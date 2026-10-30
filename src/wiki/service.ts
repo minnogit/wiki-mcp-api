@@ -9,6 +9,10 @@ import lockfile from 'proper-lockfile'
 import { z } from 'zod'
 import { rankPages, substringMatches, type RankedPage } from './search-index.js'
 import { getWikiSource, type WikiSource } from './freshness.js'
+import { currentPrincipal, type Principal } from '../auth.js'
+import { log } from '../log.js'
+import { markDenied } from '../audit.js'
+import { VISIBILITA, authorize, parseAccess, visibleTo, type Visibilita } from './access.js'
 
 const execFileAsync = promisify(execFile)
 
@@ -62,6 +66,12 @@ export interface PageFrontmatter {
   fonti: string[]
   aggiornato?: string
   stato?: string
+  /** Presente solo se il campo c'è nel file. Un valore sconosciuto è già normalizzato a `riservata`. */
+  visibilita?: Visibilita
+  /** Presente solo se non vuota. Conta solo con `visibilita: riservata`. */
+  gruppi?: string[]
+  /** Il valore sconosciuto di `visibilita` (troncato), per far notare il refuso a chi può leggere la pagina. */
+  visibilitaNonValida?: string
 }
 
 export interface Page {
@@ -187,6 +197,7 @@ async function parsePage(
     typeof v === 'string' ? v : undefined
   const stringList = (v: unknown): string[] => (Array.isArray(v) ? v.map(String) : [])
   // come in validateFrontmatter: una data YAML non quotata arriva come Date, va riportata a YYYY-MM-DD
+  const access = parseAccess(data)
   const aggiornato =
     data.aggiornato instanceof Date
       ? data.aggiornato.toISOString().slice(0, 10)
@@ -201,6 +212,9 @@ async function parsePage(
       fonti: stringList(data.fonti),
       aggiornato,
       stato: stringOrUndefined(data.stato),
+      ...(access.visibilita ? { visibilita: access.visibilita } : {}),
+      ...(access.gruppi.length > 0 ? { gruppi: access.gruppi } : {}),
+      ...(access.visibilitaNonValida ? { visibilitaNonValida: access.visibilitaNonValida } : {}),
     },
     content: content.trim(),
     links: extractLinks(content, relPath),
@@ -209,6 +223,19 @@ async function parsePage(
 }
 
 const RESERVED_ROOT_FILES = new Set(['index.md', 'log.md', 'sources.md', 'overview.md'])
+
+// Permessi per pagina: campi opzionali, validati qui in scrittura. In lettura un valore sbagliato
+// non blocca nulla ma vale `riservata` (fail-closed, vedi access.ts).
+const ACCESS_SHAPE = {
+  visibilita: z
+    .enum(VISIBILITA, { errorMap: () => ({ message: 'deve essere pubblica|interna|riservata' }) })
+    .optional(),
+  gruppi: z
+    .array(z.string().trim().min(1, 'non deve contenere nomi vuoti'), {
+      errorMap: () => ({ message: 'deve essere una lista di nomi di gruppo' }),
+    })
+    .optional(),
+}
 
 const FRONTMATTER_SCHEMA = z.object({
   tipo: z.enum(['concetto', 'soggetto', 'procedura', 'normativa', 'entita', 'analisi'], {
@@ -224,21 +251,29 @@ const FRONTMATTER_SCHEMA = z.object({
     z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'deve avere formato YYYY-MM-DD'),
   ),
   stato: z.enum(['bozza', 'stabile', 'da-rivedere']),
+  ...ACCESS_SHAPE,
 })
 
-function validateFrontmatter(relPath: string, content: string): void {
+/**
+ * Valida il frontmatter in scrittura e restituisce eventuali avvisi (non bloccanti). I file
+ * riservati di radice sono esenti, ma se dichiarano `visibilita`/`gruppi` quei due campi sono
+ * validati comunque: un refuso lì renderebbe il file invisibile (fail-closed) senza spiegazioni.
+ */
+function validateFrontmatter(relPath: string, content: string): string[] {
   const isReserved =
     path.dirname(relPath) === '.' && RESERVED_ROOT_FILES.has(path.basename(relPath))
-  if (isReserved) return
-
   const { data } = matter(content)
-  const result = FRONTMATTER_SCHEMA.safeParse(data)
+  const result = (isReserved ? z.object(ACCESS_SHAPE) : FRONTMATTER_SCHEMA).safeParse(data)
   if (!result.success) {
     const issues = result.error.issues
       .map((i) => `${i.path.join('.') || '(radice)'} ${i.message}`)
       .join('; ')
     throw new Error(`Frontmatter non valido in ${relPath}: ${issues}`)
   }
+  const { visibilita, gruppi } = result.data
+  return gruppi && gruppi.length > 0 && visibilita !== 'riservata'
+    ? [`gruppi ignorato: ha effetto solo con visibilita: riservata (in ${relPath})`]
+    : []
 }
 
 export interface RawFileInfo {
@@ -305,11 +340,20 @@ function resolveLink(
 // YAML); se assente o malformato si ripiega sulla data del file.
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/
 
+export interface WikiServiceOptions {
+  /** Da dove leggere il principal per i permessi di pagina; default `currentPrincipal`. */
+  principal?: () => Principal | undefined
+}
+
 /**
  * Crea il service di una wiki, legato al suo contesto. Cache di parsing e percorsi sono
  * locali alla chiamata: due service nello stesso processo non condividono nulla.
  */
-export function createWikiService(ctx: WikiContext) {
+export function createWikiService(ctx: WikiContext, options: WikiServiceOptions = {}) {
+  // Identità per cui filtrare: di default quella della richiesta corrente, letta a ogni chiamata
+  // (mai catturata alla creazione: il service è uno per wiki, le richieste sono di utenti diversi).
+  // `undefined` = locale, fiducia piena. Nei test si può passare un'altra sorgente.
+  const principalNow = options.principal ?? currentPrincipal
   const wikiDir = path.resolve(ctx.wikiDir)
   const rawDir = ctx.rawDir ? path.resolve(ctx.rawDir) : undefined
 
@@ -331,11 +375,21 @@ export function createWikiService(ctx: WikiContext) {
     const hit = pageCache.get(full)
     if (hit?.key === key) return hit.page
     const page = await parsePage(relPath, full, stat, ctx.tz)
+    // una volta per versione del file (cache miss): il refuso va segnalato, la pagina resta riservata
+    if (page.frontmatter.visibilitaNonValida !== undefined)
+      log().warn('page-visibility-invalid', {
+        msg: 'valore di visibilita sconosciuto: la pagina è trattata come riservata',
+        wiki: ctx.name,
+        page: relPath,
+        value: page.frontmatter.visibilitaNonValida,
+      })
     pageCache.set(full, { key, page })
     return page
   }
 
-  async function getAllPages(): Promise<Page[]> {
+  // TUTTE le pagine, nascoste comprese: uso interno, mai restituito così com'è. Ogni percorso
+  // pubblico del service passa da `visiblePages()` o da un controllo `authorize` per pagina.
+  async function loadAllPages(): Promise<Page[]> {
     const seen = new Set<string>()
     const pages = await Promise.all(
       (await scanDir(wikiDir, wikiDir, (name) => name.endsWith('.md'))).map(async (rel) => {
@@ -348,20 +402,47 @@ export function createWikiService(ctx: WikiContext) {
     return pages
   }
 
+  // Le pagine che il principal corrente può leggere. Il filtro si applica a ogni chiamata, per
+  // principal: la cache di parsing resta per pagina e non contiene risultati filtrati. Tutto ciò
+  // che aggrega (corpus per IDF e vocabolario della ricerca, grafo, conteggi) deve partire da qui,
+  // altrimenti punteggi, refusi tollerati o totali rivelano l'esistenza delle pagine nascoste.
+  async function visiblePages(): Promise<Page[]> {
+    return (await loadAllPages()).filter(visibleTo(principalNow()))
+  }
+
+  /** Le pagine visibili al principal corrente (le nascoste non compaiono). */
+  async function getAllPages(): Promise<Page[]> {
+    return visiblePages()
+  }
+
+  /**
+   * Una pagina per slug. Una pagina esistente ma non permessa restituisce `null`, come una
+   * inesistente: il chiamante non deve poter distinguere i due casi. La differenza resta solo
+   * nell'audit (`markDenied`).
+   */
   async function getPage(slug: string): Promise<Page | null> {
     const relPath = slug.endsWith('.md') ? slug : slug + '.md'
     const full = path.join(wikiDir, relPath)
     if (!full.startsWith(wikiDir + path.sep)) return null
+    let page: Page
     try {
-      return await parsePageCached(relPath, full)
+      page = await parsePageCached(relPath, full)
     } catch (e) {
       if (isEnoent(e)) return null
       throw e
     }
+    const decision = authorize(page, principalNow(), 'read')
+    if (!decision.allowed) {
+      markDenied(decision.reason)
+      return null
+    }
+    return page
   }
 
   async function searchPages(opts: SearchOpts): Promise<PageMeta[]> {
-    const allPages = await getAllPages()
+    // Corpus = sole pagine visibili: IDF, vocabolario per i refusi e snippet non devono
+    // dipendere da pagine che il chiamante non può vedere.
+    const allPages = await visiblePages()
     // Senza un limite, una query che matcha molte pagine restituisce un output
     // potenzialmente enorme (metadati + snippet per ogni pagina), che i client MCP
     // troncano per proteggere il context window — perdendo magari proprio le pagine
@@ -395,12 +476,16 @@ export function createWikiService(ctx: WikiContext) {
     return ranked.slice(0, topK).map((r) => toMeta(r, r.score))
   }
 
-  async function writePage(relPath: string, content: string): Promise<void> {
+  // Restituisce gli avvisi non bloccanti della validazione (es. `gruppi` su pagina non riservata).
+  // Nessun controllo `canWrite` qui: la scrittura esiste solo su stdio (fiducia piena). La
+  // scrittura remota della PR successiva lo chiamerà con il principal della richiesta.
+  async function writePage(relPath: string, content: string): Promise<string[]> {
     if (!relPath.endsWith('.md')) throw new Error('Solo file .md sono consentiti')
     const full = path.resolve(wikiDir, relPath)
     if (!full.startsWith(wikiDir + path.sep)) throw new Error('Path fuori dalla wiki directory')
-    validateFrontmatter(relPath, content)
+    const warnings = validateFrontmatter(relPath, content)
     await withFileLock(full, () => fsp.writeFile(full, content, 'utf-8'))
+    return warnings
   }
 
   async function appendLog(entry: string): Promise<void> {
@@ -551,14 +636,25 @@ export function createWikiService(ctx: WikiContext) {
       throw new Error('Solo path relativi a wiki/ o raw/ sono consentiti')
     const w = path.resolve(wikiDir, relPath)
     const r = rawDir ? path.resolve(rawDir, relPath) : undefined
-    if (w.startsWith(wikiDir + path.sep) && (await exists(w))) return checksumIn(wikiDir, relPath)
+    // Una pagina nascosta non deve rivelare esistenza né hash: si comporta come se in wiki/ non ci
+    // fosse (si passa a raw/, poi «File non trovato», come per un file inesistente).
+    if (
+      w.startsWith(wikiDir + path.sep) &&
+      (await exists(w)) &&
+      (!relPath.endsWith('.md') || (await getPage(relPath)) !== null)
+    )
+      return checksumIn(wikiDir, relPath)
     if (rawDir && r?.startsWith(rawDir + path.sep) && (await exists(r)))
       return checksumIn(rawDir, relPath)
     throw new Error(`File non trovato: ${relPath}`)
   }
 
+  // Come se le pagine nascoste non esistessero: un link verso una di esse resta nel grafo come
+  // link verso una pagina inesistente (appare in `forward` e come chiave di `reverse`), identico
+  // a ciò che si vedrebbe senza quella pagina. Omettere solo i link verso le nascoste le
+  // distinguerebbe dalle pagine davvero inesistenti, cioè ne rivelerebbe l'esistenza.
   async function getGraph(): Promise<Graph> {
-    const pages = await getAllPages()
+    const pages = await visiblePages()
     const forward: Record<string, string[]> = {}
     const reverse: Record<string, string[]> = {}
 
@@ -587,7 +683,7 @@ export function createWikiService(ctx: WikiContext) {
   }
 
   async function getStatus(): Promise<WikiStatus> {
-    const pages = await getAllPages()
+    const pages = await visiblePages()
     const byTipo: Record<string, number> = {}
     const byStato: Record<string, number> = {}
     let lastUpdated = ''

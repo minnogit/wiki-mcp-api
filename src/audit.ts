@@ -123,6 +123,34 @@ export class DeniedError extends Error {
   }
 }
 
+/**
+ * Vocabolario CHIUSO dei motivi di `denied` generati dai permessi per pagina. Va nel campo
+ * `reason` dell'evento: mai slug, gruppi o altro che un chiamante non debba conoscere.
+ * - `visibility`: pagina esistente con `visibilita: riservata`, e il principal non ha il gruppo giusto.
+ * - `visibility-invalid`: valore di `visibilita` sconosciuto (refuso), trattato come riservata.
+ */
+export const DENIED_REASONS = ['visibility', 'visibility-invalid'] as const
+export type DeniedReason = (typeof DENIED_REASONS)[number]
+
+// Stato della chiamata a un tool in corso, aperto da `withAudit`. Permette al service di dire
+// «questa chiamata è stata negata» senza cambiare la risposta al client (che per una pagina
+// nascosta deve restare identica a quella di una pagina inesistente): l'esito `denied` finisce
+// solo nell'audit.
+interface CallState {
+  denied?: DeniedReason
+}
+const callStates = new AsyncLocalStorage<CallState>()
+
+/**
+ * Segna la chiamata corrente come negata (esito `denied` nell'audit) lasciando intatto il
+ * risultato restituito al client. No-op fuori da un tool avvolto da `withAudit` (es. il service
+ * chiamato direttamente nei test). Vale il primo motivo segnato.
+ */
+export function markDenied(reason: DeniedReason): void {
+  const state = callStates.getStore()
+  if (state) state.denied ??= reason
+}
+
 /** Emette un evento `denied` per `tool` senza che la chiamata sia stata eseguita. */
 export function emitDenied(
   ctx: AuditContext,
@@ -236,16 +264,29 @@ export function withAudit<T extends ExecutableTool>(name: string, tool: T, ctx: 
   copy.execute = async (input: never, context: never) => {
     const start = performance.now()
     const args = reduceArgs(name, input, ctx.queryMaxChars)
+    const state: CallState = {}
     try {
-      const result = await original.call(tool, input, context)
+      const result = await callStates.run(state, () => original.call(tool, input, context))
       const durationMs = performance.now() - start
       const error = failureOf(result)
-      recordToolCall(
-        ctx,
-        error === undefined
-          ? { tool: name, outcome: 'ok', durationMs, args, resultSize: sizeOf(result) }
-          : { tool: name, outcome: 'error', durationMs, args, error },
-      )
+      if (state.denied !== undefined) {
+        // negata ma risposta identica a «non trovato»: nell'audit conta `denied`, non `error`
+        recordToolCall(ctx, {
+          tool: name,
+          outcome: 'denied',
+          durationMs,
+          args,
+          resultSize: sizeOf(result),
+          reason: state.denied,
+        })
+      } else {
+        recordToolCall(
+          ctx,
+          error === undefined
+            ? { tool: name, outcome: 'ok', durationMs, args, resultSize: sizeOf(result) }
+            : { tool: name, outcome: 'error', durationMs, args, error },
+        )
+      }
       return result
     } catch (e) {
       const durationMs = performance.now() - start
